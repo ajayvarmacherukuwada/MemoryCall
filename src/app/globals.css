@@ -1,0 +1,96 @@
+﻿@import "tailwindcss";
+
+@theme {
+  --color-background: #05070b;
+  --color-surface: rgba(255, 255, 255, 0.06);
+  --color-ink: #f4f6f8;
+  --font-sans: "Inter", "SF Pro Display", "SF Pro Text", ui-sans-serif, system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+  background:
+    radial-gradient(circle at top, rgba(120, 197, 173, 0.16), transparent 24%),
+    radial-gradient(circle at bottom, rgba(68, 121, 255, 0.12), transparent 28%),
+    linear-gradient(180deg, #07090d 0%, #05070b 44%, #030406 100%);
+  color: var(--color-ink);
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+  overflow: hidden;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(110, 230, 196, 0.28);
+  color: #ffffff;
+}
+
+.letscall-scroll {
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  overscroll-behavior: contain;
+}
+
+.letscall-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes letscall-screen-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.99);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes letscall-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.letscall-screen {
+  animation: letscall-screen-in 360ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.letscall-card {
+  animation: letscall-card-in 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
