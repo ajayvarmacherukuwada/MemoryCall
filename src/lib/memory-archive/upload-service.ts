@@ -97,7 +97,7 @@ export function uploadMemoryArchive(
       callbacks.onProgress?.({
         status: "uploading",
         progress: Math.min(88, 18 + Math.round(uploadProgress * 64)),
-        message: "Securing memory...",
+        message: "Uploading " + Math.max(1, Math.round(uploadProgress * 100)) + "%",
       });
       logUploadEvent("upload_progress", {
         loaded: event.loaded,
@@ -158,16 +158,10 @@ export function uploadMemoryArchive(
       reject(Object.assign(new Error("The upload was cancelled."), { name: "AbortError" }));
     };
 
-    callbacks.onProgress?.({ status: "preparing", progress: 10, message: "Preparing memory..." });
+    callbacks.onProgress?.({ status: "preparing", progress: 10, message: "Preparing recording..." });
     xhr.send(formData);
-    callbacks.onProgress?.({ status: "uploading", progress: 20, message: "Securing memory..." });
+    callbacks.onProgress?.({ status: "uploading", progress: 20, message: "Uploading 0%" });
     logUploadEvent("request_sent", { endpoint: "/api/memory-archive/upload", requestId });
-    window.setTimeout(() => {
-      if (xhr.readyState !== XMLHttpRequest.DONE) {
-        callbacks.onProgress?.({ status: "processing", progress: 92, message: "Finalizing archive..." });
-        logUploadEvent("upload_processing", { endpoint: "/api/memory-archive/upload", requestId });
-      }
-    }, 1200);
   });
 
   return {

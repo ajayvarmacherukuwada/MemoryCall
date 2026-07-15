@@ -13,10 +13,10 @@ function buildInviteUrl(request: Request, callId: string) {
   const url = new URL(request.url);
   const baseUrl = process.env.NEXT_PUBLIC_APP_BASE_URL?.trim();
   if (baseUrl) {
-    return `${baseUrl.replace(/\/$/, "")}/call?join=${callId}`;
+    return `${baseUrl.replace(/\/$/, "")}/call/${callId}`;
   }
 
-  return `${url.origin}/call?join=${callId}`;
+  return `${url.origin}/call/${callId}`;
 }
 
 export async function POST(request: Request) {

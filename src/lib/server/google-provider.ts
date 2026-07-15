@@ -56,12 +56,10 @@ type SupabaseLikeError = {
   hint?: string;
 };
 
+type OAuthTokenRpcRow = OAuthTokenRow | OAuthTokenRow[] | null;
+
 function logProviderEvent(step: string, details: Record<string, unknown>) {
   console.info("[LetsCall][Provider]", JSON.stringify({ step, at: new Date().toISOString(), ...details }));
-}
-
-function isPrivateSchemaUnavailable(error: unknown) {
-  return Boolean(error && typeof error === "object" && (error as SupabaseLikeError).code === "PGRST106");
 }
 
 function getErrorSummary(error: unknown) {
@@ -132,31 +130,13 @@ async function selectGoogleProviderAccount(profileId: string) {
 
 async function selectOAuthTokens(providerAccountId: string) {
   const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .schema("private")
-    .from("oauth_tokens")
-    .select("*")
-    .eq("provider_account_id", providerAccountId)
-    .maybeSingle();
+  const { data, error } = await supabase.rpc("get_private_oauth_token", {
+    p_provider_account_id: providerAccountId,
+  });
 
   if (error) throw error;
-  return (data as OAuthTokenRow | null) ?? null;
-}
-
-async function safeSelectOAuthTokens(providerAccountId: string) {
-  try {
-    return await selectOAuthTokens(providerAccountId);
-  } catch (error) {
-    if (isPrivateSchemaUnavailable(error)) {
-      logProviderEvent("oauth_tokens_private_schema_unavailable", {
-        providerAccountId,
-        ...getErrorSummary(error),
-      });
-      return null;
-    }
-
-    throw error;
-  }
+  const row = Array.isArray(data) ? data[0] ?? null : (data as OAuthTokenRpcRow);
+  return (row as OAuthTokenRow | null) ?? null;
 }
 
 async function updateProviderAccount(providerAccountId: string, patch: Partial<ProviderAccountRow>) {
@@ -165,9 +145,40 @@ async function updateProviderAccount(providerAccountId: string, patch: Partial<P
   if (error) throw error;
 }
 
-async function updateOAuthTokenRow(providerAccountId: string, patch: Partial<OAuthTokenRow>) {
+async function upsertOAuthTokenRow(input: {
+  profileId: string;
+  providerAccountId: string;
+  accessTokenEncrypted: string;
+  refreshTokenEncrypted: string;
+  tokenType: string;
+  grantedScopes: string;
+  expiresAt: string;
+  lastRefreshedAt: string | null;
+  revokedAt: string | null;
+}) {
   const supabase = getSupabaseAdminClient();
-  const { error } = await supabase.schema("private").from("oauth_tokens").update(patch).eq("provider_account_id", providerAccountId);
+  const { error } = await supabase.rpc("upsert_private_oauth_token", {
+    p_profile_id: input.profileId,
+    p_provider_account_id: input.providerAccountId,
+    p_access_token_encrypted: input.accessTokenEncrypted,
+    p_refresh_token_encrypted: input.refreshTokenEncrypted,
+    p_token_type: input.tokenType,
+    p_granted_scopes: input.grantedScopes,
+    p_expires_at: input.expiresAt,
+    p_last_refreshed_at: input.lastRefreshedAt,
+    p_revoked_at: input.revokedAt,
+  });
+
+  if (error) throw error;
+}
+
+async function markOAuthTokenRevoked(providerAccountId: string, revokedAt: string) {
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase.rpc("mark_private_oauth_token_revoked", {
+    p_provider_account_id: providerAccountId,
+    p_revoked_at: revokedAt,
+  });
+
   if (error) throw error;
 }
 
@@ -264,43 +275,17 @@ async function getOrCreateGoogleProviderAccount(input: {
     revoked_at: null,
   };
 
-  try {
-    const { data: existingToken, error: tokenSelectError } = await supabase
-      .schema("private")
-      .from("oauth_tokens")
-      .select("id")
-      .eq("provider_account_id", accountRow.id)
-      .maybeSingle();
-
-    if (tokenSelectError) throw tokenSelectError;
-
-    if (existingToken?.id) {
-      const { error } = await supabase
-        .schema("private")
-        .from("oauth_tokens")
-        .update(tokenPayload)
-        .eq("id", existingToken.id);
-
-      if (error) throw error;
-    } else {
-      const { error } = await supabase
-        .schema("private")
-        .from("oauth_tokens")
-        .insert(tokenPayload);
-
-      if (error) throw error;
-    }
-  } catch (error) {
-    if (isPrivateSchemaUnavailable(error)) {
-      logProviderEvent("oauth_tokens_persistence_skipped", {
-        profileId: input.profileId,
-        providerAccountId: accountRow.id,
-        ...getErrorSummary(error),
-      });
-    } else {
-      throw error;
-    }
-  }
+  await upsertOAuthTokenRow({
+    profileId: input.profileId,
+    providerAccountId: accountRow.id,
+    accessTokenEncrypted: encryptedAccessToken,
+    refreshTokenEncrypted: encryptedRefreshToken,
+    tokenType: input.tokenType,
+    grantedScopes: input.grantedScopes,
+    expiresAt: input.expiresAt,
+    lastRefreshedAt: nowIso,
+    revokedAt: null,
+  });
 
   const { error: profileUpdateError } = await supabase
     .from("profiles")
@@ -329,7 +314,7 @@ export async function syncGoogleProviderConnection(input: {
   };
 }) {
   const existing = await selectGoogleProviderAccount(input.profileId);
-  const existingTokens = existing.account ? await safeSelectOAuthTokens(existing.account.id) : null;
+  const existingTokens = existing.account ? await selectOAuthTokens(existing.account.id) : null;
   const resolvedRefreshToken = input.googleTokens.refreshToken ?? (existingTokens ? decryptGoogleSecret(existingTokens.refresh_token_encrypted) : null);
 
   if (!resolvedRefreshToken) {
@@ -388,27 +373,60 @@ export async function getGoogleProviderSession(profileId: string): Promise<Provi
 
   const metadata = parseMetadata(account.provider_metadata);
   const youtube = (metadata.youtube as { id?: string; title?: string | null } | null) ?? null;
-  const tokens = await safeSelectOAuthTokens(account.id);
-  const canRefreshTokens = Boolean(tokens?.refresh_token_encrypted);
+  const tokens = await selectOAuthTokens(account.id);
+  if (!tokens) {
+    const shouldReconnect = account.connection_status === "connected" || account.connection_status === "onboarding";
+    if (shouldReconnect) {
+      await updateProviderAccount(account.id, {
+        connection_status: "needs_reconnect",
+        archive_enabled: false,
+        provider_metadata: {
+          ...metadata,
+          tokenState: "missing",
+        },
+      });
+    }
+
+    return {
+      signedIn: true,
+      userId: profileId,
+      email: account.provider_email,
+      displayName: account.provider_display_name,
+      photoUrl: account.provider_photo_url,
+      providerKey: GOOGLE_PROVIDER_KEY,
+      providerDisplayName: provider.display_name,
+      providerConnectionState: shouldReconnect ? "needs_reconnect" : account.connection_status,
+      archiveEnabled: false,
+      youtubeChannelId: youtube?.id ?? null,
+      youtubeChannelTitle: youtube?.title ?? null,
+      lastVerifiedAt: account.last_verified_at,
+      connectedAt: account.connected_at,
+      refreshRequired: true,
+    };
+  }
+
+  const canRefreshTokens = Boolean(tokens.refresh_token_encrypted);
   const refreshRequired = !canRefreshTokens && (account.connection_status === "needs_reconnect" || account.connection_status === "revoked");
 
   let resolvedAccount = account;
 
-  if (tokens && !refreshRequired) {
+  if (!refreshRequired) {
     const expiresAtMs = new Date(tokens.expires_at).getTime();
     if (expiresAtMs <= Date.now() + TOKEN_REFRESH_SKEW_MS) {
       try {
         const refreshToken = decryptGoogleSecret(tokens.refresh_token_encrypted);
         const refreshed = await refreshGoogleAccessToken(refreshToken);
         const encryptedRefreshToken = refreshed.refreshToken ? encryptGoogleSecret(refreshed.refreshToken) : null;
-        await updateOAuthTokenRow(account.id, {
-          access_token_encrypted: encryptGoogleSecret(refreshed.accessToken),
-          refresh_token_encrypted: encryptedRefreshToken ?? tokens.refresh_token_encrypted,
-          token_type: refreshed.tokenType,
-          granted_scopes: refreshed.scope || tokens.granted_scopes,
-          expires_at: new Date(Date.now() + refreshed.expiresIn * 1000).toISOString(),
-          last_refreshed_at: new Date().toISOString(),
-          revoked_at: null,
+        await upsertOAuthTokenRow({
+          profileId,
+          providerAccountId: account.id,
+          accessTokenEncrypted: encryptGoogleSecret(refreshed.accessToken),
+          refreshTokenEncrypted: encryptedRefreshToken ?? tokens.refresh_token_encrypted,
+          tokenType: refreshed.tokenType,
+          grantedScopes: refreshed.scope || tokens.granted_scopes,
+          expiresAt: new Date(Date.now() + refreshed.expiresIn * 1000).toISOString(),
+          lastRefreshedAt: new Date().toISOString(),
+          revokedAt: null,
         });
         const refreshedChannel = isFreshChannelMetadata(account.last_verified_at) && youtube?.id ? youtube : await fetchGoogleChannelInfo(refreshed.accessToken).catch(() => null);
         if (refreshedChannel?.id && !account.archive_enabled) {
@@ -493,7 +511,7 @@ export async function getGoogleAccessToken(profileId: string) {
     throw error;
   }
 
-  const tokens = await safeSelectOAuthTokens(account.id);
+  const tokens = await selectOAuthTokens(account.id);
   if (!tokens) {
     const error = new Error("Google tokens are missing for this account.");
     (error as Error & { code?: string }).code = "needs_reconnect";
@@ -512,14 +530,16 @@ export async function getGoogleAccessToken(profileId: string) {
   try {
     const refreshToken = decryptGoogleSecret(tokens.refresh_token_encrypted);
     const refreshed = await refreshGoogleAccessToken(refreshToken);
-    await updateOAuthTokenRow(account.id, {
-      access_token_encrypted: encryptGoogleSecret(refreshed.accessToken),
-      refresh_token_encrypted: refreshed.refreshToken ? encryptGoogleSecret(refreshed.refreshToken) : tokens.refresh_token_encrypted,
-      token_type: refreshed.tokenType,
-      granted_scopes: refreshed.scope || tokens.granted_scopes,
-      expires_at: new Date(Date.now() + refreshed.expiresIn * 1000).toISOString(),
-      last_refreshed_at: new Date().toISOString(),
-      revoked_at: null,
+    await upsertOAuthTokenRow({
+      profileId,
+      providerAccountId: account.id,
+      accessTokenEncrypted: encryptGoogleSecret(refreshed.accessToken),
+      refreshTokenEncrypted: refreshed.refreshToken ? encryptGoogleSecret(refreshed.refreshToken) : tokens.refresh_token_encrypted,
+      tokenType: refreshed.tokenType,
+      grantedScopes: refreshed.scope || tokens.granted_scopes,
+      expiresAt: new Date(Date.now() + refreshed.expiresIn * 1000).toISOString(),
+      lastRefreshedAt: new Date().toISOString(),
+      revokedAt: null,
     });
 
     return {
@@ -532,9 +552,7 @@ export async function getGoogleAccessToken(profileId: string) {
       connection_status: "needs_reconnect",
       archive_enabled: false,
     });
-    await updateOAuthTokenRow(account.id, {
-      revoked_at: new Date().toISOString(),
-    });
+    await markOAuthTokenRevoked(account.id, new Date().toISOString());
     const wrapped = new Error(error instanceof Error ? error.message : "Unable to refresh Google access token.");
     (wrapped as Error & { code?: string }).code = (error as Error & { code?: string }).code ?? "needs_reconnect";
     throw wrapped;
@@ -545,7 +563,7 @@ export async function disconnectGoogleProvider(profileId: string) {
   const { account } = await selectGoogleProviderAccount(profileId);
   if (!account) return;
 
-  const tokens = await safeSelectOAuthTokens(account.id);
+  const tokens = await selectOAuthTokens(account.id);
   const tokenValue = tokens ? decryptGoogleSecret(tokens.refresh_token_encrypted || tokens.access_token_encrypted) : null;
 
   if (tokenValue) {
@@ -568,9 +586,7 @@ export async function disconnectGoogleProvider(profileId: string) {
     disconnected_at: new Date().toISOString(),
   });
   if (tokens) {
-    await updateOAuthTokenRow(account.id, {
-      revoked_at: new Date().toISOString(),
-    });
+    await markOAuthTokenRevoked(account.id, new Date().toISOString());
   }
 
   logProviderEvent("disconnected", { profileId, accountId: account.id });

@@ -101,13 +101,13 @@ export const MemoryArchiveService = {
       throw Object.assign(new Error(blockedMessage), { code: "needs_channel" });
     }
 
-    callbacks.onProgress?.({ status: "preparing", progress: 8, message: "Preparing memory..." });
+    callbacks.onProgress?.({ status: "preparing", progress: 8, message: "Preparing recording..." });
 
     const requestId = crypto.randomUUID();
     let controller: ReturnType<typeof uploadMemoryArchive> | null = null;
 
     try {
-      callbacks.onProgress?.({ status: "preparing", progress: 16, message: "Preparing memory..." });
+      callbacks.onProgress?.({ status: "uploading", progress: 20, message: "Uploading recording..." });
       logArchiveEvent("upload_controller_created", { title: input.title, collection: input.collection, requestId });
       controller = uploadMemoryArchive(input, sessionToken, requestId, {
         onProgress: callbacks.onProgress,
@@ -117,7 +117,8 @@ export const MemoryArchiveService = {
 
       const response = await withTimeout(controller.promise, 120000, "Timed out while uploading the memory archive.");
       persistUploadResponse(response);
-      callbacks.onProgress?.({ status: "archived", progress: 100, message: "Finalizing archive..." });
+      callbacks.onProgress?.({ status: "processing", progress: 92, message: "Processing archive..." });
+      callbacks.onProgress?.({ status: "archived", progress: 100, message: "Archive complete." });
       logArchiveEvent("archive_complete", {
         archiveId: response.archive.archiveId,
         providerId: response.providerState.providerId,

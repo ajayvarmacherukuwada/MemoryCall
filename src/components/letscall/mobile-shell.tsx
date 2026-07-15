@@ -67,11 +67,19 @@ export function AppShell({
   activeTab,
   title,
   subtitle,
+  headerBadge,
+  mainClassName,
+  showHeader = true,
+  showNav = true,
   children,
 }: {
   activeTab: AppTab;
   title: string;
   subtitle?: string;
+  headerBadge?: string | null;
+  mainClassName?: string;
+  showHeader?: boolean;
+  showNav?: boolean;
   children: ReactNode;
 }) {
   const pathname = usePathname();
@@ -82,78 +90,86 @@ export function AppShell({
         <div className="relative flex h-[100dvh] w-full max-w-[460px] flex-col overflow-hidden rounded-[34px] border border-white/10 bg-[linear-gradient(180deg,rgba(14,18,25,0.98),rgba(7,9,13,0.98))] shadow-[0_28px_110px_rgba(0,0,0,0.58)] ring-1 ring-white/5 sm:h-[calc(100dvh-3rem)]">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(142,241,209,0.12),transparent_24%),radial-gradient(circle_at_bottom_left,rgba(111,138,255,0.12),transparent_20%)]" />
           <div className="relative flex h-full flex-col letscall-screen">
-            <header className="border-b border-white/8 px-5 pb-4 pt-[calc(14px+env(safe-area-inset-top))]">
-              <div className="flex items-center justify-between text-[12px] font-medium tracking-[0.22em] text-white/58">
-                <span>09:41</span>
-                <span className="flex items-center gap-2 text-white/52">
-                  <span className="size-2 rounded-full bg-emerald-300/80" />
-                  <span className="h-2.5 w-4 rounded-full border border-white/35" />
-                  <span className="h-2.5 w-5 rounded-[6px] border border-white/35" />
-                </span>
-              </div>
-
-              <div className="mt-4 flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/38">LetsCall</p>
-                  <h1 className="mt-2 text-[27px] font-semibold tracking-[-0.04em] text-white">{title}</h1>
-                  {subtitle ? <p className="mt-3 max-w-[320px] text-[15px] leading-6 text-white/60">{subtitle}</p> : null}
+            {showHeader ? (
+              <header className="border-b border-white/8 px-5 pb-4 pt-[calc(14px+env(safe-area-inset-top))]">
+                <div className="flex items-center justify-between text-[12px] font-medium tracking-[0.22em] text-white/58">
+                  <span>09:41</span>
+                  <span className="flex items-center gap-2 text-white/52">
+                    <span className="size-2 rounded-full bg-emerald-300/80" />
+                    <span className="h-2.5 w-4 rounded-full border border-white/35" />
+                    <span className="h-2.5 w-5 rounded-[6px] border border-white/35" />
+                  </span>
                 </div>
-                <div className="rounded-full border border-white/10 bg-white/6 px-3 py-2 text-[12px] font-medium text-white/72 backdrop-blur-xl">
-                  {pathname === "/profile" ? "People" : "Ready"}
-                </div>
-              </div>
-            </header>
 
-            <main className="letscall-scroll flex-1 overflow-y-auto overscroll-contain px-5 pb-[calc(18px+env(safe-area-inset-bottom))] pt-4">
+                <div className="mt-4 flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/38">LetsCall</p>
+                    <h1 className="mt-2 text-[27px] font-semibold tracking-[-0.04em] text-white">{title}</h1>
+                    {subtitle ? <p className="mt-3 max-w-[320px] text-[15px] leading-6 text-white/60">{subtitle}</p> : null}
+                  </div>
+                  {headerBadge === null ? null : (
+                    <div className="rounded-full border border-white/10 bg-white/6 px-3 py-2 text-[12px] font-medium text-white/72 backdrop-blur-xl">
+                      {headerBadge ?? (pathname === "/profile" ? "People" : "Ready")}
+                    </div>
+                  )}
+                </div>
+              </header>
+            ) : null}
+
+            <main
+              className={mainClassName ? mainClassName : "letscall-scroll flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 pb-[calc(18px+env(safe-area-inset-bottom))] pt-4"}
+            >
               {children}
             </main>
 
-            <nav className="border-t border-white/8 bg-[rgba(8,11,16,0.88)] px-3 pb-[calc(10px+env(safe-area-inset-bottom))] pt-3 backdrop-blur-xl">
-              <div className="grid grid-cols-5 items-end gap-1">
-                {tabs.map((tab) => {
-                  const isActive = tab.id === activeTab;
-                  const isMemory = tab.id === "memory";
+            {showNav ? (
+              <nav className="border-t border-white/8 bg-[rgba(8,11,16,0.88)] px-3 pb-[calc(10px+env(safe-area-inset-bottom))] pt-3 backdrop-blur-xl">
+                <div className="grid grid-cols-5 items-end gap-1">
+                  {tabs.map((tab) => {
+                    const isActive = tab.id === activeTab;
+                    const isMemory = tab.id === "memory";
 
-                  if (isMemory) {
+                    if (isMemory) {
+                      return (
+                        <Link
+                          key={tab.id}
+                          href={tab.href}
+                          aria-label={tab.label}
+                          className={cx(
+                            "group relative -mt-8 flex flex-col items-center justify-center gap-2 rounded-[24px] px-1 pb-1 pt-0 text-center transition duration-200 active:scale-[0.98]",
+                            isActive ? "text-white" : "text-white/62",
+                          )}
+                        >
+                          <span className="grid h-16 w-16 place-items-center rounded-[22px] bg-[linear-gradient(180deg,#93f4d5_0%,#65c9ad_100%)] text-[0px] text-[#08110f] shadow-[0_18px_40px_rgba(87,209,171,0.28)] ring-1 ring-white/25 transition duration-200 group-active:scale-[0.98]">
+                            <svg viewBox="0 0 24 24" className="size-[20px]" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M12 5v14" strokeLinecap="round" />
+                              <path d="M5 12h14" strokeLinecap="round" />
+                            </svg>
+                          </span>
+                          <span className="text-[10px] font-semibold tracking-[0.06em]">+</span>
+                        </Link>
+                      );
+                    }
+
                     return (
                       <Link
                         key={tab.id}
                         href={tab.href}
-                        aria-label={tab.label}
                         className={cx(
-                          "group relative -mt-8 flex flex-col items-center justify-center gap-2 rounded-[24px] px-1 pb-1 pt-0 text-center transition duration-200 active:scale-[0.98]",
-                          isActive ? "text-white" : "text-white/62",
+                          "flex min-h-[58px] flex-col items-center justify-center gap-1 rounded-[18px] px-1 py-2 text-center transition duration-200 active:scale-[0.98]",
+                          isActive ? "bg-white/8 text-white" : "text-white/48 hover:bg-white/5 hover:text-white/72",
                         )}
                       >
-                        <span className="grid h-16 w-16 place-items-center rounded-[22px] bg-[linear-gradient(180deg,#93f4d5_0%,#65c9ad_100%)] text-[0px] text-[#08110f] shadow-[0_18px_40px_rgba(87,209,171,0.28)] ring-1 ring-white/25 transition duration-200 group-active:scale-[0.98]">
-                          <svg viewBox="0 0 24 24" className="size-[20px]" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M12 5v14" strokeLinecap="round" />
-                            <path d="M5 12h14" strokeLinecap="round" />
-                          </svg>
-                        </span>
-                        <span className="text-[10px] font-semibold tracking-[0.06em]">+</span>
+                        <svg viewBox="0 0 24 24" className="size-[19px]" fill="none" stroke="currentColor" strokeWidth="1.9">
+                          {tab.icon}
+                        </svg>
+                        <span className="text-[10px] font-semibold tracking-[0.04em]">{tab.label}</span>
                       </Link>
                     );
-                  }
-
-                  return (
-                    <Link
-                      key={tab.id}
-                      href={tab.href}
-                      className={cx(
-                        "flex min-h-[58px] flex-col items-center justify-center gap-1 rounded-[18px] px-1 py-2 text-center transition duration-200 active:scale-[0.98]",
-                        isActive ? "bg-white/8 text-white" : "text-white/48 hover:bg-white/5 hover:text-white/72",
-                      )}
-                    >
-                      <svg viewBox="0 0 24 24" className="size-[19px]" fill="none" stroke="currentColor" strokeWidth="1.9">
-                        {tab.icon}
-                      </svg>
-                      <span className="text-[10px] font-semibold tracking-[0.04em]">{tab.label}</span>
-                    </Link>
-                  );
-                })}
-              </div>
-            </nav>
+                  })}
+                </div>
+              </nav>
+            ) : null}
           </div>
         </div>
       </div>
@@ -299,7 +315,3 @@ export function SearchPill({ children }: { children: ReactNode }) {
     </button>
   );
 }
-
-
-
-

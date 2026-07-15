@@ -5,9 +5,11 @@ export type CallLifecycle =
   | "creating"
   | "joining"
   | "waiting"
+  | "waiting_for_participant"
   | "reconnecting"
   | "connecting"
-  | "active"
+  | "connected"
+  | "recording"
   | "ending"
   | "finalizing_recording"
   | "archiving"
@@ -50,7 +52,9 @@ export type CallSnapshot = {
   guestJoined: boolean;
   connectionLabel: string;
   cameraEnabled: boolean;
+  cameraFacingMode: "user" | "environment";
   microphoneEnabled: boolean;
+  speakerEnabled: boolean;
   localStreamReady: boolean;
   remoteStreamReady: boolean;
   localStream: MediaStream | null;
@@ -69,6 +73,10 @@ export type CallCompletion = {
   durationSeconds: number;
   title: string;
   description: string;
+  recordingSessionId: string;
+  chunkCount: number;
+  totalBytes: number;
+  mimeType: string;
 };
 
 export type CallRoomInfo = {

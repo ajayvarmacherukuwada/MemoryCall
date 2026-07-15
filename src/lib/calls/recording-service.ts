@@ -1,5 +1,11 @@
-﻿export type RecordingOptions = {
+"use client";
+
+import { appendRecordingChunk, finalizeRecordingSession, upsertRecordingSession } from "@/lib/calls/recording-store";
+
+export type RecordingOptions = {
   title: string;
+  callId?: string | null;
+  sessionId?: string;
   localStream: MediaStream;
   remoteStream: MediaStream | null;
 };
@@ -9,6 +15,10 @@ export type RecordingResult = {
   durationSeconds: number;
   title: string;
   description: string;
+  recordingSessionId: string;
+  chunkCount: number;
+  totalBytes: number;
+  mimeType: string;
 };
 
 function logRecordingEvent(step: string, details: Record<string, unknown>) {
@@ -60,16 +70,44 @@ function createAudioMixer(localStream: MediaStream, remoteStream: MediaStream | 
   };
 }
 
+function buildRecordingFileName(title: string) {
+  return `${title.replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "memory-call"}.webm`;
+}
+
 export function createRecordingSession(options: RecordingOptions) {
+  const recordingSessionId = options.sessionId ?? crypto.randomUUID();
   const mimeType = pickMimeType();
   const localTracks = options.localStream.getTracks();
   const remoteTracks = options.remoteStream?.getTracks() ?? [];
+  const fileName = buildRecordingFileName(options.title);
+  const description = `One-to-one memory call recorded on ${new Date().toLocaleDateString("en-US")}`;
 
   logRecordingEvent("create_session", {
     title: options.title,
+    callId: options.callId ?? null,
+    sessionId: recordingSessionId,
     mimeType,
     localTracks: localTracks.length,
     remoteTracks: remoteTracks.length,
+  });
+
+  void upsertRecordingSession({
+    sessionId: recordingSessionId,
+    callId: options.callId ?? null,
+    title: options.title,
+    description,
+    fileName,
+    mimeType,
+    status: "recording",
+    chunkCount: 0,
+    totalBytes: 0,
+    durationSeconds: null,
+    finalBlob: null,
+  }).catch((error) => {
+    logRecordingEvent("session_persist_failed", {
+      sessionId: recordingSessionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
   });
 
   const canvas = document.createElement("canvas");
@@ -102,8 +140,19 @@ export function createRecordingSession(options: RecordingOptions) {
     mimeType,
   });
 
+  logRecordingEvent("media_recorder_created", {
+    title: options.title,
+    sessionId: recordingSessionId,
+    state: mediaRecorder.state,
+    mimeType: mediaRecorder.mimeType || mimeType,
+    mixedVideoTracks: mixedStream.getVideoTracks().length,
+    mixedAudioTracks: mixedStream.getAudioTracks().length,
+  });
+
   const chunks: BlobPart[] = [];
   let animationFrameId = 0;
+  let firstChunkReceived = false;
+  let chunkSequence = 0;
   const startedAt = performance.now();
 
   const draw = () => {
@@ -148,45 +197,96 @@ export function createRecordingSession(options: RecordingOptions) {
     animationFrameId = window.requestAnimationFrame(draw);
   };
 
-  draw();
-  mediaRecorder.start(1000);
-  logRecordingEvent("recorder_started", {
-    title: options.title,
-    mimeType: mediaRecorder.mimeType || mimeType,
-    state: mediaRecorder.state,
-  });
-
   const recordingPromise = new Promise<RecordingResult>((resolve, reject) => {
+    mediaRecorder.onstart = () => {
+      logRecordingEvent("recorder_onstart", {
+        title: options.title,
+        sessionId: recordingSessionId,
+        state: mediaRecorder.state,
+        mimeType: mediaRecorder.mimeType || mimeType,
+      });
+    };
+
     mediaRecorder.ondataavailable = (event) => {
+      logRecordingEvent("dataavailable", {
+        size: event.data.size,
+        chunksBeforePush: chunks.length,
+        mimeType: event.data.type || mediaRecorder.mimeType || mimeType,
+        sessionId: recordingSessionId,
+      });
+      if (!firstChunkReceived && event.data.size > 0) {
+        firstChunkReceived = true;
+        logRecordingEvent("first_dataavailable", {
+          size: event.data.size,
+          mimeType: event.data.type || mediaRecorder.mimeType || mimeType,
+          sessionId: recordingSessionId,
+        });
+      }
       if (event.data.size > 0) {
         chunks.push(event.data);
+        chunkSequence += 1;
+        void appendRecordingChunk(recordingSessionId, chunkSequence, event.data, mediaRecorder.mimeType || mimeType).catch((error) => {
+          logRecordingEvent("chunk_persist_failed", {
+            sessionId: recordingSessionId,
+            sequence: chunkSequence,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
         logRecordingEvent("chunk_received", {
           size: event.data.size,
           chunks: chunks.length,
           mimeType: event.data.type || mediaRecorder.mimeType || mimeType,
+          sessionId: recordingSessionId,
+          sequence: chunkSequence,
         });
       }
     };
 
     mediaRecorder.onerror = () => {
-      logRecordingEvent("recorder_error", { state: mediaRecorder.state });
+      logRecordingEvent("recorder_error", { state: mediaRecorder.state, sessionId: recordingSessionId });
       reject(new Error("Unable to record the call."));
     };
     mediaRecorder.onstop = () => {
+      logRecordingEvent("recorder_onstop", {
+        state: mediaRecorder.state,
+        chunks: chunks.length,
+        firstChunkReceived,
+        sessionId: recordingSessionId,
+      });
       const elapsedMs = Math.max(0, performance.now() - startedAt);
       const durationSeconds = Math.max(1, Math.round(elapsedMs / 1000));
       const blob = new Blob(chunks, { type: mediaRecorder.mimeType || mimeType || "video/webm" });
+      logRecordingEvent("blob_created", {
+        chunks: chunks.length,
+        blobSize: blob.size,
+        blobType: blob.type || "video/webm",
+        firstChunkReceived,
+        sessionId: recordingSessionId,
+      });
       if (blob.size <= 0) {
         logRecordingEvent("blob_invalid", {
           chunks: chunks.length,
           blobSize: blob.size,
           blobType: blob.type || "video/webm",
+          sessionId: recordingSessionId,
         });
         reject(new Error("No recording was produced for this call."));
         return;
       }
-      const file = new File([blob], `${options.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "memory-call"}.webm`, {
+      const file = new File([blob], fileName, {
         type: blob.type || "video/webm",
+      });
+
+      void finalizeRecordingSession(recordingSessionId, {
+        fileName: file.name,
+        mimeType: file.type || "video/webm",
+        durationSeconds,
+        finalBlob: blob,
+      }).catch((error) => {
+        logRecordingEvent("session_finalize_failed", {
+          sessionId: recordingSessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
       });
 
       logRecordingEvent("recorder_stopped", {
@@ -195,15 +295,35 @@ export function createRecordingSession(options: RecordingOptions) {
         blobType: blob.type || "video/webm",
         fileName: file.name,
         durationSeconds,
+        sessionId: recordingSessionId,
       });
 
       resolve({
         file,
         durationSeconds,
         title: options.title,
-        description: `One-to-one memory call recorded on ${new Date().toLocaleDateString("en-US")}`,
+        description,
+        recordingSessionId,
+        chunkCount: chunks.length,
+        totalBytes: blob.size,
+        mimeType: file.type || "video/webm",
       });
     };
+  });
+
+  draw();
+  logRecordingEvent("start_recording_invoked", {
+    title: options.title,
+    sessionId: recordingSessionId,
+    stateBeforeStart: mediaRecorder.state,
+    timesliceMs: 1000,
+  });
+  mediaRecorder.start(1000);
+  logRecordingEvent("recorder_started", {
+    title: options.title,
+    sessionId: recordingSessionId,
+    mimeType: mediaRecorder.mimeType || mimeType,
+    state: mediaRecorder.state,
   });
 
   return {
@@ -212,20 +332,39 @@ export function createRecordingSession(options: RecordingOptions) {
         state: mediaRecorder.state,
         chunkCount: chunks.length,
         mimeType: mediaRecorder.mimeType || mimeType,
+        firstChunkReceived,
+        sessionId: recordingSessionId,
       });
       window.cancelAnimationFrame(animationFrameId);
       if (mediaRecorder.state !== "inactive") {
+        try {
+          mediaRecorder.requestData();
+          logRecordingEvent("request_data_before_stop", {
+            state: mediaRecorder.state,
+            chunkCount: chunks.length,
+            sessionId: recordingSessionId,
+          });
+        } catch (error) {
+          logRecordingEvent("request_data_before_stop_failed", {
+            error: error instanceof Error ? error.message : String(error),
+            state: mediaRecorder.state,
+            sessionId: recordingSessionId,
+          });
+        }
         mediaRecorder.stop();
       }
+      const result = await recordingPromise;
       localVideo.srcObject = null;
       remoteVideo.srcObject = null;
       await audioMixer.close();
-      const result = await recordingPromise;
+      mixedStream.getTracks().forEach((track) => track.stop());
+      canvasStream.getTracks().forEach((track) => track.stop());
       logRecordingEvent("stop_resolved", {
         fileName: result.file.name,
         fileSize: result.file.size,
         mimeType: result.file.type,
         durationSeconds: result.durationSeconds,
+        sessionId: recordingSessionId,
       });
       return result;
     },
@@ -235,8 +374,17 @@ export function createRecordingSession(options: RecordingOptions) {
         hasStream: Boolean(stream),
         audioTracks: stream?.getAudioTracks().length ?? 0,
         videoTracks: stream?.getVideoTracks().length ?? 0,
+        sessionId: recordingSessionId,
+      });
+    },
+    updateLocalStream: (stream: MediaStream | null) => {
+      localVideo.srcObject = stream;
+      logRecordingEvent("local_stream_updated", {
+        hasStream: Boolean(stream),
+        audioTracks: stream?.getAudioTracks().length ?? 0,
+        videoTracks: stream?.getVideoTracks().length ?? 0,
+        sessionId: recordingSessionId,
       });
     },
   };
 }
-

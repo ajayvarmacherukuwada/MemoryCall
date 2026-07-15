@@ -18,6 +18,26 @@ export type CollectionItem = {
   tone: CollectionTone;
 };
 
+export type PersonItem = {
+  id: string;
+  name: string;
+  relationship: string;
+  lastSeen: string;
+  note: string;
+  tone: CollectionTone;
+};
+
+export type RecentCallItem = {
+  id: string;
+  title: string;
+  participants: string;
+  time: string;
+  duration: string;
+  mode: "Video" | "Audio";
+  summary: string;
+  tone: CollectionTone;
+};
+
 export const continueMemory: MemoryItem = {
   id: "last-memory",
   title: "Sunday check-in with Mom",
@@ -55,6 +75,74 @@ export const recentMemories: MemoryItem[] = [
     duration: "24 min",
     summary: "Saved the reading list, course notes, and the one concept that finally clicked.",
     tag: "Learning",
+  },
+];
+
+export const people: PersonItem[] = [
+  {
+    id: "person-1",
+    name: "Mom",
+    relationship: "Family",
+    lastSeen: "Spoke yesterday",
+    note: "Prefers short updates and a quick video call in the evening.",
+    tone: "rose",
+  },
+  {
+    id: "person-2",
+    name: "Priya",
+    relationship: "Work",
+    lastSeen: "Last call 2h ago",
+    note: "Usually wants a clean video check-in before a decision.",
+    tone: "cyan",
+  },
+  {
+    id: "person-3",
+    name: "Avery",
+    relationship: "Learning",
+    lastSeen: "This morning",
+    note: "Likes audio-first planning sessions and quick follow-ups.",
+    tone: "violet",
+  },
+  {
+    id: "person-4",
+    name: "Dr. Ellis",
+    relationship: "Health",
+    lastSeen: "Scheduled tomorrow",
+    note: "Best reached by audio when the details need to stay focused.",
+    tone: "emerald",
+  },
+];
+
+export const recentCalls: RecentCallItem[] = [
+  {
+    id: "call-1",
+    title: "Family catch-up",
+    participants: "Mom, Maya",
+    time: "Today · 8:14 PM",
+    duration: "18 min",
+    mode: "Video",
+    summary: "A calm check-in on travel plans, birthdays, and the details worth remembering.",
+    tone: "rose",
+  },
+  {
+    id: "call-2",
+    title: "Project decision",
+    participants: "Priya, Marcus",
+    time: "Yesterday · 4:02 PM",
+    duration: "32 min",
+    mode: "Video",
+    summary: "Captured the launch timeline and the one follow-up that needs another pass.",
+    tone: "cyan",
+  },
+  {
+    id: "call-3",
+    title: "Doctor follow-up",
+    participants: "Dr. Ellis",
+    time: "Tue · 9:10 AM",
+    duration: "11 min",
+    mode: "Audio",
+    summary: "Saved the medication note, appointment reminder, and the question to ask next time.",
+    tone: "emerald",
   },
 ];
 
@@ -108,4 +196,3 @@ export const searchResults: MemoryItem[] = [
     tag: "Family",
   },
 ];
-

@@ -1,13 +1,14 @@
 ﻿"use client";
 
 import Link from "next/link";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import { AppShell, Badge, GlassCard } from "@/components/letscall/mobile-shell";
+import type { ReactNode } from "react";
+import { AppShell, Avatar, GlassCard } from "@/components/letscall/mobile-shell";
 import { useSessionProfile } from "@/components/letscall/use-session-profile";
 import { CallService } from "@/lib/calls/call-service";
 import { MemoryArchiveService } from "@/lib/memory-archive/memory-archive-service";
-import type { CallCompletion } from "@/lib/calls/types";
+import type { CallCompletion, CallSnapshot } from "@/lib/calls/types";
 import type { MemoryArchiveRecord } from "@/lib/memory-archive/types";
 
 function formatDuration(seconds: number) {
@@ -56,7 +57,7 @@ function copyToClipboard(value: string) {
 function buildJoinUrl(inviteUrl: string | null, callId: string | null) {
   if (inviteUrl) return inviteUrl;
   if (!callId) return "";
-  return `${window.location.origin}/call?join=${encodeURIComponent(callId)}`;
+  return `${window.location.origin}/call/${encodeURIComponent(callId)}`;
 }
 
 function logCallUiEvent(step: string, details: Record<string, unknown>) {
@@ -71,119 +72,52 @@ function logLifecycleEvent(step: string, details: Record<string, unknown>) {
   console.info("[CALL LIFECYCLE]", JSON.stringify({ step, at: new Date().toISOString(), ...details }));
 }
 
-function VideoFrame({ title, stream, muted = false }: { title: string; stream: MediaStream | null; muted?: boolean }) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-
-  useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.srcObject = stream;
-    }
-  }, [stream]);
-
-  return (
-    <GlassCard className="overflow-hidden p-0">
-      <div className="relative aspect-video bg-black/60">
-        {stream ? (
-          <video ref={videoRef} autoPlay playsInline muted={muted} className="h-full w-full object-cover" />
-        ) : (
-          <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-white/52">{title}</div>
-        )}
-      </div>
-    </GlassCard>
-  );
+function getFriendlyCallStatus(lifecycle: string) {
+  switch (lifecycle) {
+    case "creating":
+    case "joining":
+      return "Connecting...";
+    case "waiting":
+    case "waiting_for_participant":
+      return "Ringing...";
+    case "reconnecting":
+      return "Reconnecting...";
+    case "connected":
+      return "Connected";
+    case "recording":
+      return "Private Memory Call";
+    case "finalizing_recording":
+    case "archiving":
+      return "Saving Memory...";
+    case "ending":
+      return "Ending Call...";
+    case "success":
+      return "Completed";
+    case "failed":
+      return "Call Ended";
+    default:
+      return "Calling...";
+  }
 }
 
-function CallLauncher({
-  onCreate,
-  onJoin,
-  joinCode,
-  onJoinCodeChange,
-  busy,
-}: {
-  onCreate: () => void;
-  onJoin: () => void;
-  joinCode: string;
-  onJoinCodeChange: (value: string) => void;
-  busy: boolean;
-}) {
-  return (
-    <div className="space-y-4">
-      <GlassCard className="p-5">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/38">Memory Call</p>
-        <h2 className="mt-4 text-[32px] font-semibold leading-[0.98] tracking-[-0.05em] text-white">Create a private one-to-one memory call.</h2>
-        <p className="mt-3 text-[15px] leading-6 text-white/62">
-          Open a call, share the link, and LetsCall will archive the recording automatically when the call ends.
-        </p>
-      </GlassCard>
+function formatContactLabel(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "Your contact";
 
-      <button
-        type="button"
-        onClick={() => {
-          console.info("[CALL UI]", JSON.stringify({
-            step: "Start Memory Call button clicked",
-            at: new Date().toISOString(),
-          }));
-          onCreate();
-        }}
-        disabled={busy}
-        className="flex min-h-[56px] w-full items-center justify-center rounded-[24px] bg-[linear-gradient(180deg,#93f4d5_0%,#65c9ad_100%)] px-5 text-[16px] font-semibold text-[#07110f] shadow-[0_18px_42px_rgba(87,209,171,0.3)] transition active:scale-[0.98] disabled:opacity-60"
-      >
-        Start Memory Call
-      </button>
+  if (trimmed.includes("@")) {
+    const localPart = trimmed.split("@")[0] ?? trimmed;
+    return localPart
+      .split(/[._-]/g)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+  }
 
-      <GlassCard className="space-y-4 p-4">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">Join</p>
-          <h3 className="mt-2 text-[20px] font-semibold tracking-[-0.03em] text-white">Enter a call code</h3>
-        </div>
-
-        <input
-          value={joinCode}
-          onChange={(event) => {
-            const nextValue = event.target.value.toUpperCase();
-            console.info("[JOIN UI]", JSON.stringify({
-              step: "Call code changed",
-              at: new Date().toISOString(),
-              rawValue: event.target.value,
-              normalizedValue: nextValue.replace(/\s+/g, "").trim(),
-            }));
-            onJoinCodeChange(nextValue);
-          }}
-          onInput={(event) => {
-            const nextValue = event.currentTarget.value.toUpperCase();
-            console.info("[JOIN UI]", JSON.stringify({
-              step: "Call code changed",
-              at: new Date().toISOString(),
-              rawValue: event.currentTarget.value,
-              normalizedValue: nextValue.replace(/\s+/g, "").trim(),
-            }));
-            onJoinCodeChange(nextValue);
-          }}
-          inputMode="text"
-          autoCapitalize="characters"
-          autoCorrect="off"
-          spellCheck={false}
-          placeholder="AB12CD34"
-          className="h-14 w-full rounded-[20px] border border-white/10 bg-white/6 px-4 text-[15px] tracking-[0.2em] text-white outline-none placeholder:text-white/30 focus:border-white/20"
-        />
-
-        <button
-          type="button"
-          onClick={() => {
-            console.info("[JOIN UI]", JSON.stringify({
-              step: "Join Memory Call button clicked",
-              at: new Date().toISOString(),
-            }));
-            onJoin();
-          }}
-          disabled={busy || joinCode.replace(/\s+/g, "").trim().length !== 8}
-          className="flex min-h-[52px] w-full items-center justify-center rounded-[20px] border border-white/10 bg-white/6 px-5 text-[15px] font-semibold text-white transition active:scale-[0.98] disabled:opacity-50"
-        >
-          Join Memory Call
-        </button>
-      </GlassCard>
-    </div>
-  );
+  return trimmed
+    .split(/\s+/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function CallProgressCard({
@@ -226,6 +160,212 @@ function CallProgressCard({
   );
 }
 
+function CallLauncher({
+  onCreate,
+  onJoin,
+  joinCode,
+  onJoinCodeChange,
+  busy,
+}: {
+  onCreate: () => void;
+  onJoin: () => void;
+  joinCode: string;
+  onJoinCodeChange: (value: string) => void;
+  busy: boolean;
+}) {
+  return (
+    <div className="space-y-4">
+      <GlassCard className="p-5">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/38">Memory Call</p>
+        <h2 className="mt-4 text-[32px] font-semibold leading-[0.98] tracking-[-0.05em] text-white">Create a private one-to-one memory call.</h2>
+        <p className="mt-3 text-[15px] leading-6 text-white/62">Open a call, share the link, and LetsCall will archive the recording automatically when the call ends.</p>
+      </GlassCard>
+
+      <button
+        type="button"
+        onClick={() => {
+          console.info("[CALL UI]", JSON.stringify({ step: "Start Memory Call button clicked", at: new Date().toISOString() }));
+          onCreate();
+        }}
+        disabled={busy}
+        className="flex min-h-[56px] w-full items-center justify-center rounded-[24px] bg-[linear-gradient(180deg,#93f4d5_0%,#65c9ad_100%)] px-5 text-[16px] font-semibold text-[#07110f] shadow-[0_18px_42px_rgba(87,209,171,0.3)] transition active:scale-[0.98] disabled:opacity-60"
+      >
+        Start Memory Call
+      </button>
+
+      <GlassCard className="space-y-4 p-4">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">Join</p>
+          <h3 className="mt-2 text-[20px] font-semibold tracking-[-0.03em] text-white">Enter a call code</h3>
+        </div>
+        <input
+          value={joinCode}
+          onChange={(event) => {
+            const nextValue = event.target.value.toUpperCase();
+            console.info("[JOIN UI]", JSON.stringify({ step: "Call code changed", at: new Date().toISOString(), rawValue: event.target.value, normalizedValue: nextValue.replace(/\s+/g, "").trim() }));
+            onJoinCodeChange(nextValue);
+          }}
+          onInput={(event) => {
+            const nextValue = event.currentTarget.value.toUpperCase();
+            console.info("[JOIN UI]", JSON.stringify({ step: "Call code changed", at: new Date().toISOString(), rawValue: event.currentTarget.value, normalizedValue: nextValue.replace(/\s+/g, "").trim() }));
+            onJoinCodeChange(nextValue);
+          }}
+          inputMode="text"
+          autoCapitalize="characters"
+          autoCorrect="off"
+          spellCheck={false}
+          placeholder="AB12CD34"
+          className="h-14 w-full rounded-[20px] border border-white/10 bg-white/6 px-4 text-[15px] tracking-[0.2em] text-white outline-none placeholder:text-white/30 focus:border-white/20"
+        />
+        <button
+          type="button"
+          onClick={() => {
+            console.info("[JOIN UI]", JSON.stringify({ step: "Join Memory Call button clicked", at: new Date().toISOString() }));
+            onJoin();
+          }}
+          disabled={busy || joinCode.replace(/\s+/g, "").trim().length !== 8}
+          className="flex min-h-[52px] w-full items-center justify-center rounded-[20px] border border-white/10 bg-white/6 px-5 text-[15px] font-semibold text-white transition active:scale-[0.98] disabled:opacity-50"
+        >
+          Join Memory Call
+        </button>
+      </GlassCard>
+    </div>
+  );
+}
+function CallStage({
+  snapshot,
+  participantName,
+  userName,
+  onFlipCamera,
+  onToggleMicrophone,
+  onToggleCamera,
+  onToggleSpeaker,
+  onEndCall,
+  noticeMessage,
+  noticeTone = "amber",
+}: {
+  snapshot: CallSnapshot;
+  participantName: string;
+  userName: string;
+  onFlipCamera: () => void;
+  onToggleMicrophone: () => void;
+  onToggleCamera: () => void;
+  onToggleSpeaker: () => void;
+  onEndCall: () => void;
+  noticeMessage?: string | null;
+  noticeTone?: "amber" | "rose";
+}) {
+  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = snapshot.remoteStream;
+      remoteVideoRef.current.muted = !snapshot.speakerEnabled;
+    }
+  }, [snapshot.remoteStream, snapshot.speakerEnabled]);
+
+  useEffect(() => {
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = snapshot.localStream;
+    }
+  }, [snapshot.localStream]);
+
+  const participantLabel = formatContactLabel(participantName || "Your contact");
+  const userLabel = userName || "You";
+  const cameraTrack = snapshot.localStream?.getVideoTracks().find((track) => track.kind === "video") ?? null;
+  const cameraActive = Boolean(cameraTrack && cameraTrack.enabled && snapshot.cameraEnabled);
+  const previewMirrored = snapshot.cameraFacingMode === "user";
+  const connectedTimer =
+    snapshot.remoteStream || snapshot.recordingActive || snapshot.lifecycle === "recording" || snapshot.lifecycle === "finalizing_recording" || snapshot.lifecycle === "archiving"
+      ? formatDuration(snapshot.elapsedSeconds)
+      : null;
+
+  return (
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(147,244,213,0.14),_transparent_28%),radial-gradient(circle_at_bottom,_rgba(92,132,255,0.16),_transparent_30%),linear-gradient(180deg,#081017_0%,#05070b_100%)]">
+      {snapshot.remoteStream ? (
+        <video ref={remoteVideoRef} autoPlay playsInline className="absolute inset-0 h-full w-full object-cover" />
+      ) : (
+        <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
+          <div className="flex max-w-[300px] flex-col items-center gap-4">
+            <div className="relative grid size-40 place-items-center">
+              <div className="absolute inset-0 animate-pulse rounded-full bg-[radial-gradient(circle,rgba(147,244,213,0.22),rgba(147,244,213,0.04)_58%,transparent_72%)] blur-3xl" />
+              <Avatar name={participantLabel} imageUrl={null} size={96} />
+            </div>
+            <div>
+              <p className="mt-2 text-[14px] leading-6 text-white/68 text-center">
+                {snapshot.lifecycle === "waiting" || snapshot.lifecycle === "waiting_for_participant"
+                  ? "Ringing..."
+                  : snapshot.lifecycle === "connecting" || snapshot.lifecycle === "creating" || snapshot.lifecycle === "joining"
+                    ? "Connecting..."
+                    : "Private Memory Call"}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(4,6,10,0.1)_0%,rgba(4,6,10,0.18)_38%,rgba(4,6,10,0.34)_70%,rgba(4,6,10,0.76)_100%)]" />
+
+      <div className="absolute left-4 right-4 top-4 z-20 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-[16px] font-semibold tracking-[-0.02em] text-white">{participantLabel}</p>
+          <p className="text-[12px] text-white/70">{connectedTimer ? `Connected - ${connectedTimer}` : getFriendlyCallStatus(snapshot.lifecycle)}</p>
+        </div>
+      </div>
+
+      <div
+        className="absolute right-4 top-4 z-20 overflow-hidden rounded-[18px] border border-white/14 bg-black/46 shadow-[0_16px_36px_rgba(0,0,0,0.28)] backdrop-blur-xl"
+        style={{ width: "clamp(72px, 18vw, 92px)" }}
+        aria-label="Local preview"
+      >
+        <div className="relative aspect-[9/16] w-full bg-black/70">
+          {cameraActive && snapshot.localStream ? (
+            <video
+              ref={localVideoRef}
+              autoPlay
+              playsInline
+              muted
+              className={`h-full w-full object-cover ${previewMirrored ? "scale-x-[-1]" : ""}`}
+            />
+          ) : (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-2 text-center text-white/70">
+              <Avatar name={userLabel} imageUrl={null} size={44} />
+              <p className="text-[11px] font-semibold text-white">Camera Off</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {noticeMessage ? (
+        <div className="absolute inset-x-4 bottom-[96px] z-20 text-center">
+          <p className={noticeTone === "rose" ? "text-[13px] font-medium text-rose-100/90" : "text-[13px] font-medium text-amber-50/90"}>{noticeMessage}</p>
+        </div>
+      ) : null}
+
+      <div className="absolute inset-x-3 bottom-3 z-20 rounded-[26px] border border-white/10 bg-[rgba(5,7,11,0.5)] px-3 py-3 shadow-[0_18px_44px_rgba(0,0,0,0.32)] backdrop-blur-2xl sm:inset-x-4 sm:bottom-4">
+        <div className="flex items-center justify-between gap-2">
+          <button type="button" onClick={onToggleMicrophone} className="flex h-12 flex-1 items-center justify-center rounded-full border border-white/10 bg-white/8 px-2 text-white transition active:scale-[0.97]">
+            <span className="text-[11px] font-semibold">{snapshot.microphoneEnabled ? "Mute" : "Unmute"}</span>
+          </button>
+          <button type="button" onClick={onToggleCamera} className="flex h-12 flex-1 items-center justify-center rounded-full border border-white/10 bg-white/8 px-2 text-white transition active:scale-[0.97]">
+            <span className="text-[11px] font-semibold">{cameraActive ? "Camera" : "Camera Off"}</span>
+          </button>
+          <button type="button" onClick={onFlipCamera} className="flex h-12 flex-1 items-center justify-center rounded-full border border-white/10 bg-white/8 px-2 text-white transition active:scale-[0.97]">
+            <span className="text-[11px] font-semibold">Switch</span>
+          </button>
+          <button type="button" onClick={onToggleSpeaker} className="flex h-12 flex-1 items-center justify-center rounded-full border border-white/10 bg-white/8 px-2 text-white transition active:scale-[0.97]">
+            <span className="text-[11px] font-semibold">{snapshot.speakerEnabled ? "Speaker" : "Speaker Off"}</span>
+          </button>
+          <button type="button" onClick={onEndCall} className="flex h-12 flex-[1.15] items-center justify-center rounded-full bg-[linear-gradient(180deg,#ff8f7d_0%,#ef5b48_100%)] px-2 text-white shadow-[0_18px_40px_rgba(239,91,72,0.32)] transition active:scale-[0.97]">
+            <span className="text-[11px] font-semibold">End</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SavedMemoryCard({ record }: { record: MemoryArchiveRecord }) {
   return (
     <div className="space-y-4">
@@ -234,7 +374,6 @@ function SavedMemoryCard({ record }: { record: MemoryArchiveRecord }) {
         <h2 className="mt-4 text-[32px] font-semibold leading-[0.98] tracking-[-0.05em] text-white">Memory saved successfully</h2>
         <p className="mt-3 text-[15px] leading-6 text-white/62">Your call is now part of your private memory archive.</p>
       </GlassCard>
-
       <GlassCard className="p-4">
         <div className="space-y-3">
           <div>
@@ -257,7 +396,6 @@ function SavedMemoryCard({ record }: { record: MemoryArchiveRecord }) {
           </div>
         </div>
       </GlassCard>
-
       <Link
         href="/library"
         className="flex min-h-[56px] items-center justify-center rounded-[24px] bg-[linear-gradient(180deg,#93f4d5_0%,#65c9ad_100%)] px-5 text-[16px] font-semibold text-[#07110f] shadow-[0_18px_42px_rgba(87,209,171,0.3)] transition active:scale-[0.98]"
@@ -267,21 +405,27 @@ function SavedMemoryCard({ record }: { record: MemoryArchiveRecord }) {
     </div>
   );
 }
-
 export function CallScreen() {
   const searchParams = useSearchParams();
+  const params = useParams<{ callId?: string }>();
+  const router = useRouter();
   const [snapshot, setSnapshot] = useState(CallService.getSnapshot());
   const [joinCode, setJoinCode] = useState(searchParams.get("join") ?? "");
   const [busy, setBusy] = useState(false);
   const [savedMemory, setSavedMemory] = useState<MemoryArchiveRecord | null>(null);
   const [archiveSetupRequired, setArchiveSetupRequired] = useState(false);
-  const profile = useSessionProfile();
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const [archiveProgress, setArchiveProgress] = useState(0);
   const [archiveMessage, setArchiveMessage] = useState("Preparing memory...");
   const [inviteCopyState, setInviteCopyState] = useState<"idle" | "copied">("idle");
   const archiveStartedRef = useRef(false);
+  const autoStartRequestedRef = useRef(false);
   const completionRef = useRef<CallCompletion | null>(null);
+  const profile = useSessionProfile();
+  const routeCallId = typeof params?.callId === "string" ? params.callId : Array.isArray(params?.callId) ? params.callId[0] ?? null : null;
+  const contactNameFromUrl = searchParams.get("name") ?? searchParams.get("person") ?? searchParams.get("contact") ?? "";
+  const contactDisplayName = formatContactLabel(contactNameFromUrl);
+  const hasAutoCallIntent = Boolean(routeCallId || searchParams.get("person") || searchParams.get("contact") || searchParams.get("join"));
 
   useEffect(() => {
     return CallService.subscribe(() => setSnapshot(CallService.getSnapshot()));
@@ -303,12 +447,15 @@ export function CallScreen() {
 
   const handleJoinCodeChange = (value: string) => {
     const nextValue = value.toUpperCase();
-    console.info("[JOIN UI]", JSON.stringify({
-      step: "Call code changed",
-      at: new Date().toISOString(),
-      rawValue: value,
-      normalizedValue: nextValue.replace(/\s+/g, "").trim(),
-    }));
+    console.info(
+      "[JOIN UI]",
+      JSON.stringify({
+        step: "Call code changed",
+        at: new Date().toISOString(),
+        rawValue: value,
+        normalizedValue: nextValue.replace(/\s+/g, "").trim(),
+      }),
+    );
     setJoinCode(nextValue);
   };
 
@@ -329,14 +476,13 @@ export function CallScreen() {
     if (!completion || archiveStartedRef.current) {
       return;
     }
-
     if (snapshot.lifecycle !== "finalizing_recording") {
       return;
     }
-
     archiveStartedRef.current = true;
     completionRef.current = completion;
     void archiveCompletion(completion);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot.lifecycle, snapshot.callId]);
 
   useEffect(() => {
@@ -345,36 +491,43 @@ export function CallScreen() {
     };
   }, []);
 
-  const isInCall = ["creating", "joining", "waiting", "reconnecting", "connecting", "active", "ending", "finalizing_recording"].includes(snapshot.lifecycle);
+  useEffect(() => {
+    if (autoStartRequestedRef.current) return;
+    if (!hasAutoCallIntent) return;
+    if (busy || savedMemory || archiveSetupRequired || snapshot.lifecycle === "failed") return;
+    if (snapshot.callId || snapshot.lifecycle !== "idle") return;
+
+    autoStartRequestedRef.current = true;
+    if (routeCallId) {
+      void handleJoin(routeCallId);
+      return;
+    }
+    if (searchParams.get("join")) {
+      void handleJoin();
+      return;
+    }
+    void handleCreate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [archiveSetupRequired, busy, hasAutoCallIntent, searchParams, savedMemory, snapshot.callId, snapshot.lifecycle]);
+
+  useEffect(() => {
+    if (!savedMemory) return;
+    const timeout = window.setTimeout(() => {
+      router.replace("/");
+    }, 1200);
+    return () => window.clearTimeout(timeout);
+  }, [router, savedMemory]);
+
   const isArchiving = snapshot.lifecycle === "archiving";
   const isFailed = snapshot.lifecycle === "failed";
 
-  const status = useMemo(() => {
-    switch (snapshot.lifecycle) {
-      case "success":
-        return "Archived";
-      case "archiving":
-        return "Archiving";
-      case "finalizing_recording":
-        return "Finalizing";
-      case "ending":
-        return "Ending";
-      case "active":
-        return "Active";
-      case "waiting":
-        return "Waiting";
-      case "reconnecting":
-        return "Reconnecting";
-      case "joining":
-        return "Joining";
-      case "creating":
-        return "Creating";
-      case "failed":
-        return "Failed";
-      default:
-        return "Ready";
-    }
-  }, [snapshot.lifecycle]);
+  const status = useMemo(() => getFriendlyCallStatus(snapshot.lifecycle), [snapshot.lifecycle]);
+  const callSubtitle =
+    snapshot.lifecycle === "connected" || snapshot.lifecycle === "recording" || snapshot.lifecycle === "finalizing_recording" || snapshot.lifecycle === "archiving"
+      ? snapshot.elapsedSeconds > 0
+        ? `${status} · ${formatDuration(snapshot.elapsedSeconds)}`
+        : status
+      : status;
 
   async function archiveCompletion(completion: CallCompletion) {
     logLifecycleEvent("ARCHIVE_STARTED", {
@@ -392,6 +545,7 @@ export function CallScreen() {
     setArchiveMessage("Preparing memory...");
     setArchiveError(null);
     setArchiveSetupRequired(false);
+
     try {
       const archive = await MemoryArchiveService.archiveRecording(
         {
@@ -405,7 +559,11 @@ export function CallScreen() {
           onProgress: (progress) => {
             setArchiveProgress(progress.progress);
             setArchiveMessage(progress.message);
-            logCallUiEvent("archive_progress", { status: progress.status, progress: progress.progress, message: progress.message });
+            logCallUiEvent("archive_progress", {
+              status: progress.status,
+              progress: progress.progress,
+              message: progress.message,
+            });
           },
           onBlocked: (message) => {
             setArchiveError(message);
@@ -413,12 +571,14 @@ export function CallScreen() {
           },
         },
       );
+
       if (!profile.archiveEnabled) {
         setArchiveSetupRequired(true);
         setArchiveMessage("Archive setup required. Create a free YouTube channel to enable automatic memory archiving.");
         CallService.markFailed("Archive setup required. Create a free YouTube channel to enable automatic memory archiving.");
         return;
       }
+
       setSavedMemory(archive);
       CallService.markSuccess(archive.archiveId, "Memory saved to your library.");
       logCallUiEvent("archive_success", { archiveId: archive.archiveId });
@@ -438,16 +598,12 @@ export function CallScreen() {
     archiveStartedRef.current = false;
     completionRef.current = null;
     logCallUiEvent("create_call_requested", {});
-    console.info("[CALL API]", JSON.stringify({
-      step: "Sending create call request",
-      at: new Date().toISOString(),
-    }));
+    console.info("[CALL API]", JSON.stringify({ step: "Sending create call request", at: new Date().toISOString() }));
+
     try {
-      await CallService.startHostCall();
-      console.info("[CALL API]", JSON.stringify({
-        step: "Create call response received",
-        at: new Date().toISOString(),
-      }));
+      const response = await CallService.startHostCall();
+      router.replace(`/call/${encodeURIComponent(response.callId)}`);
+      console.info("[CALL API]", JSON.stringify({ step: "Create call response received", at: new Date().toISOString(), callId: response.callId }));
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to start the memory call.";
       setArchiveError(message);
@@ -458,9 +614,9 @@ export function CallScreen() {
     }
   };
 
-  const handleJoin = async () => {
-    const code = normalizedJoinCode;
-    if (!isJoinCodeValid) return;
+  const handleJoin = async (overrideCallId?: string) => {
+    const code = (overrideCallId ?? normalizedJoinCode).replace(/\s+/g, "").trim().toUpperCase();
+    if (code.length !== 8) return;
 
     setBusy(true);
     setArchiveError(null);
@@ -472,8 +628,10 @@ export function CallScreen() {
     logJoinUiEvent("Validation result", { callCode: code, isValid: true, busy: true });
     logCallUiEvent("join_call_requested", { callId: code });
     console.info("[JOIN API]", JSON.stringify({ step: "Sending join request", at: new Date().toISOString(), callId: code }));
+
     try {
       await CallService.joinCall(code);
+      router.replace(`/call/${encodeURIComponent(code)}`);
       console.info("[JOIN API]", JSON.stringify({ step: "Response received", at: new Date().toISOString(), callId: code }));
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to join the memory call.";
@@ -485,20 +643,6 @@ export function CallScreen() {
     }
   };
 
-  const handleCopyInvite = async () => {
-    const inviteText = buildJoinUrl(snapshot.inviteUrl, snapshot.callId);
-    if (!inviteText) return;
-    try {
-      await copyToClipboard(inviteText);
-      setInviteCopyState("copied");
-      window.setTimeout(() => setInviteCopyState("idle"), 1800);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to copy the invite link.";
-      setArchiveError(message);
-    }
-    logCallUiEvent("copy_invite", { inviteUrl: inviteText, callId: snapshot.callId });
-  };
-
   const handleEndCall = async () => {
     setBusy(true);
     setArchiveError(null);
@@ -507,6 +651,7 @@ export function CallScreen() {
     setArchiveMessage("Ending call...");
     archiveStartedRef.current = false;
     logCallUiEvent("end_call_requested", { callId: snapshot.callId });
+
     try {
       const completion = await CallService.endCall();
       completionRef.current = completion;
@@ -514,12 +659,14 @@ export function CallScreen() {
         callId: snapshot.callId,
         hasRecording: Boolean(completion?.recording),
       });
+
       if (!completion?.recording) {
         const message = "No recording was produced for this call.";
         setArchiveError(message);
         CallService.markFailed(message);
         return;
       }
+
       if (!profile.archiveEnabled) {
         setArchiveSetupRequired(true);
         const message = "Archive setup required. Create a free YouTube channel to enable automatic memory archiving.";
@@ -528,6 +675,7 @@ export function CallScreen() {
         CallService.markFailed(message);
         return;
       }
+
       setArchiveMessage("Finalizing recording...");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to end the call.";
@@ -544,6 +692,7 @@ export function CallScreen() {
     if (!completion?.recording) {
       return;
     }
+
     archiveStartedRef.current = false;
     setArchiveError(null);
     setArchiveSetupRequired(false);
@@ -551,172 +700,118 @@ export function CallScreen() {
     await archiveCompletion(completion);
   };
 
+  const participantLabel = contactDisplayName || "Private Call";
+  const noticeMessage =
+    snapshot.lifecycle === "reconnecting"
+      ? snapshot.errorMessage ?? "The connection is recovering. Please stay on this screen while LetsCall reconnects signaling."
+      : archiveError && snapshot.lifecycle !== "archiving"
+        ? archiveError
+        : null;
+
+  const renderShell = (content: ReactNode) => (
+    <AppShell
+      activeTab="home"
+      title="Call"
+      subtitle={undefined}
+      headerBadge={null}
+      showHeader={false}
+      showNav={false}
+      mainClassName="flex-1 min-h-0 overflow-hidden p-0"
+    >
+      {content}
+    </AppShell>
+  );
+
   if (archiveSetupRequired) {
-    return (
-      <AppShell activeTab="memory" title="Memory Call" subtitle="Archive setup required before automatic upload.">
-        <CallProgressCard
-          title="Archive setup required"
-          message="Create a free YouTube channel to enable automatic memory archiving."
-          progress={100}
-          error={archiveError ?? "Create a free YouTube channel to enable automatic memory archiving."}
-        />
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <a
-            href="https://www.youtube.com/create_channel"
-            target="_blank"
-            rel="noreferrer"
-            className="flex min-h-[52px] items-center justify-center rounded-[20px] bg-[linear-gradient(180deg,#93f4d5_0%,#65c9ad_100%)] px-5 text-[15px] font-semibold text-[#07110f]"
-          >
-            Create Channel
-          </a>
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            className="flex min-h-[52px] items-center justify-center rounded-[20px] border border-white/10 bg-white/6 px-5 text-[15px] font-semibold text-white"
-          >
-            Refresh Status
-          </button>
+    return renderShell(
+      <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(147,244,213,0.14),_transparent_28%),radial-gradient(circle_at_bottom,_rgba(92,132,255,0.16),_transparent_30%),linear-gradient(180deg,#081017_0%,#05070b_100%)]">
+        <div className="mx-auto flex h-full w-full max-w-[560px] flex-col justify-center px-4 py-4 sm:px-5">
+          <CallProgressCard
+            title="Archive setup required"
+            message="Create a free YouTube channel to enable automatic memory archiving."
+            progress={100}
+            error={archiveError ?? "Create a free YouTube channel to enable automatic memory archiving."}
+          />
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <a
+              href="https://www.youtube.com/create_channel"
+              target="_blank"
+              rel="noreferrer"
+              className="flex min-h-[52px] items-center justify-center rounded-[20px] bg-[linear-gradient(180deg,#93f4d5_0%,#65c9ad_100%)] px-5 text-[15px] font-semibold text-[#07110f]"
+            >
+              Create Channel
+            </a>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="flex min-h-[52px] items-center justify-center rounded-[20px] border border-white/10 bg-white/6 px-5 text-[15px] font-semibold text-white"
+            >
+              Refresh Status
+            </button>
+          </div>
         </div>
-      </AppShell>
-    );
-  }
-  if (savedMemory) {
-    return (
-      <AppShell activeTab="memory" title="Memory Call" subtitle="The call is now archived in your private library.">
-        <SavedMemoryCard record={savedMemory} />
-      </AppShell>
+      </div>
     );
   }
 
-  if (isArchiving || snapshot.lifecycle === "finalizing_recording") {
+  if (savedMemory) {
+    return renderShell(
+      <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(147,244,213,0.14),_transparent_28%),radial-gradient(circle_at_bottom,_rgba(92,132,255,0.16),_transparent_30%),linear-gradient(180deg,#081017_0%,#05070b_100%)]">
+        <div className="mx-auto flex h-full w-full max-w-[560px] flex-col justify-center px-4 py-4 sm:px-5">
+          <SavedMemoryCard record={savedMemory} />
+        </div>
+      </div>
+    );
+  }
+
+  if (snapshot.lifecycle === "archiving" || snapshot.lifecycle === "finalizing_recording") {
     const title = snapshot.lifecycle === "finalizing_recording" ? "Finalizing recording..." : "Saving memory...";
     const progress = snapshot.lifecycle === "finalizing_recording" ? 28 : archiveProgress;
-    return (
-      <AppShell activeTab="memory" title="Memory Call" subtitle="Your call is being archived.">
-        <CallProgressCard title={title} message={archiveMessage} progress={progress} error={archiveError} />
-      </AppShell>
+    return renderShell(
+      <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(147,244,213,0.14),_transparent_28%),radial-gradient(circle_at_bottom,_rgba(92,132,255,0.16),_transparent_30%),linear-gradient(180deg,#081017_0%,#05070b_100%)]">
+        <div className="mx-auto flex h-full w-full max-w-[560px] flex-col justify-center px-4 py-4 sm:px-5">
+          <CallProgressCard title={title} message={archiveMessage} progress={progress} error={archiveError} />
+        </div>
+      </div>
     );
   }
 
   if (isFailed) {
-    return (
-      <AppShell activeTab="memory" title="Memory Call" subtitle="The archive flow needs attention.">
-        <CallProgressCard
-          title="Archive failed"
-          message={archiveMessage}
-          progress={100}
-          error={archiveError ?? snapshot.errorMessage}
-          onRetry={completionRef.current?.recording ? handleRetryArchive : undefined}
-        />
-      </AppShell>
+    return renderShell(
+      <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(147,244,213,0.14),_transparent_28%),radial-gradient(circle_at_bottom,_rgba(92,132,255,0.16),_transparent_30%),linear-gradient(180deg,#081017_0%,#05070b_100%)]">
+        <div className="mx-auto flex h-full w-full max-w-[560px] flex-col justify-center px-4 py-4 sm:px-5">
+          <CallProgressCard
+            title="Archive failed"
+            message={archiveMessage}
+            progress={100}
+            error={archiveError ?? snapshot.errorMessage}
+            onRetry={completionRef.current?.recording ? handleRetryArchive : undefined}
+          />
+        </div>
+      </div>
     );
   }
 
-  return (
-    <AppShell activeTab="memory" title="Memory Call" subtitle="Make a private one-to-one call and archive it automatically.">
-      <div className="space-y-4">
-        <GlassCard className="p-5">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/38">Call</p>
-              <h2 className="mt-2 text-[30px] font-semibold tracking-[-0.04em] text-white">
-                {snapshot.callId ? "Memory Call" : "Private call studio"}
-              </h2>
-              <p className="mt-3 text-[15px] leading-6 text-white/62">{snapshot.statusMessage}</p>
-            </div>
-            <Badge>{status}</Badge>
-          </div>
-        </GlassCard>
+  return renderShell(
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(147,244,213,0.14),_transparent_28%),radial-gradient(circle_at_bottom,_rgba(92,132,255,0.16),_transparent_30%),linear-gradient(180deg,#081017_0%,#05070b_100%)]">
+      <div className="flex h-full min-h-0 flex-col">
+        <CallStage
+          snapshot={snapshot}
+          participantName={participantLabel}
+          userName={profile.displayName || "You"}
+          onFlipCamera={() => CallService.flipCamera()}
+          onToggleMicrophone={() => CallService.toggleMicrophone()}
+          onToggleCamera={() => CallService.toggleCamera()}
+          onToggleSpeaker={() => CallService.toggleSpeaker()}
+          onEndCall={handleEndCall}
+          noticeMessage={noticeMessage}
+          noticeTone={snapshot.lifecycle === "reconnecting" || archiveError ? "rose" : "amber"}
+        />
 
-        {!isInCall ? (
-          <CallLauncher onCreate={handleCreate} onJoin={handleJoin} joinCode={joinCode} onJoinCodeChange={handleJoinCodeChange} busy={busy} />
-        ) : (
-          <div className="space-y-4">
-            {snapshot.lifecycle === "reconnecting" ? (
-              <GlassCard className="border border-amber-300/20 bg-amber-500/10 p-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-amber-100/80">Reconnecting</p>
-                <p className="mt-2 text-[14px] leading-6 text-amber-50/90">
-                  {snapshot.errorMessage ?? "The connection is recovering. Please stay on this screen while LetsCall reconnects signaling."}
-                </p>
-              </GlassCard>
-            ) : null}
-            <GlassCard className="p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">Call code</p>
-                  <p className="mt-2 text-[18px] font-semibold tracking-[0.22em] text-white">{snapshot.callId}</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleCopyInvite}
-                  className="rounded-full border border-white/10 bg-white/6 px-4 py-2 text-[12px] font-semibold text-white"
-                >
-                  {inviteCopyState === "copied" ? "Copied" : "Copy invite"}
-                </button>
-              </div>
-              <p className="mt-3 text-[13px] text-white/52">Share this invite with the other person so they can join the call.</p>
-            </GlassCard>
-
-            <div className="grid gap-3">
-              <VideoFrame title="Remote participant will appear here" stream={snapshot.remoteStream} />
-              <div className="grid grid-cols-[1fr_120px] gap-3">
-                <VideoFrame title="Your preview" stream={snapshot.localStream} muted />
-                <GlassCard className="flex flex-col justify-between p-4">
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/38">Status</p>
-                    <p className="mt-2 text-[14px] leading-6 text-white/68">{snapshot.statusMessage}</p>
-                  </div>
-                  <div className="mt-4 text-[12px] font-medium tracking-[0.12em] text-white/42">{formatDuration(snapshot.elapsedSeconds)}</div>
-                </GlassCard>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-3 gap-3">
-              <button
-                type="button"
-                onClick={() => CallService.toggleCamera()}
-                className="flex min-h-[56px] items-center justify-center rounded-[22px] border border-white/10 bg-white/6 px-4 text-[14px] font-semibold text-white"
-              >
-                {snapshot.cameraEnabled ? "Camera On" : "Camera Off"}
-              </button>
-              <button
-                type="button"
-                onClick={() => CallService.toggleMicrophone()}
-                className="flex min-h-[56px] items-center justify-center rounded-[22px] border border-white/10 bg-white/6 px-4 text-[14px] font-semibold text-white"
-              >
-                {snapshot.microphoneEnabled ? "Mic On" : "Mic Off"}
-              </button>
-              <button
-                type="button"
-                onClick={handleEndCall}
-                disabled={busy}
-                className="flex min-h-[56px] items-center justify-center rounded-[22px] bg-[linear-gradient(180deg,#ff8c7b_0%,#e65c54_100%)] px-4 text-[14px] font-semibold text-white disabled:opacity-70"
-              >
-                End
-              </button>
-            </div>
-          </div>
-        )}
-
-        {archiveError && !isArchiving && !isFailed ? (
-          <GlassCard className="border border-rose-300/20 bg-rose-500/10 p-4">
-            <p className="whitespace-pre-wrap text-[13px] leading-6 text-rose-50">{archiveError}</p>
-          </GlassCard>
-        ) : null}
+        <div className="sr-only" aria-live="polite">
+          {inviteCopyState === "copied" ? "Invite copied to clipboard." : ""}
+        </div>
       </div>
-    </AppShell>
+    </div>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

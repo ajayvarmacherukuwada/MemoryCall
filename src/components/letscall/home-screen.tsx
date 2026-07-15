@@ -1,7 +1,7 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AppShell, Avatar, Badge, GlassCard, SectionHeader } from "@/components/letscall/mobile-shell";
 import { useMemoryArchive } from "@/lib/memory-archive/storage";
 import type { MemoryArchiveRecord } from "@/lib/memory-archive/types";
@@ -123,13 +123,13 @@ function ContactCard({
 
       <div className="mt-4 grid grid-cols-2 gap-3">
         <Link
-          href={`/call?contact=${encodeURIComponent(contact.email)}&mode=video`}
+          href={`/call?contact=${encodeURIComponent(contact.email)}&name=${encodeURIComponent(displayName)}&mode=video`}
           className="flex min-h-[48px] items-center justify-center rounded-[18px] bg-[linear-gradient(180deg,#93f4d5_0%,#65c9ad_100%)] px-4 text-[14px] font-semibold text-[#07110f] transition active:scale-[0.98]"
         >
           Video Call
         </Link>
         <Link
-          href={`/call?contact=${encodeURIComponent(contact.email)}&mode=audio`}
+          href={`/call?contact=${encodeURIComponent(contact.email)}&name=${encodeURIComponent(displayName)}&mode=audio`}
           className="flex min-h-[48px] items-center justify-center rounded-[18px] border border-white/10 bg-white/6 px-4 text-[14px] font-semibold text-white transition active:scale-[0.98]"
         >
           Audio Call
@@ -168,6 +168,8 @@ function AddContactSheet({
 }) {
   const [email, setEmail] = useState("");
   const [nickname, setNickname] = useState("");
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const dragState = useRef({ startY: 0, currentY: 0, dragging: false });
 
   useEffect(() => {
     if (!open) {
@@ -176,31 +178,98 @@ function AddContactSheet({
     }
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [open]);
+
   if (!open) return null;
 
+  const resetDrag = () => {
+    dragState.current = { startY: 0, currentY: 0, dragging: false };
+    if (panelRef.current) {
+      panelRef.current.style.transform = "translateY(0px)";
+    }
+  };
+
+  const finishDrag = () => {
+    const distance = dragState.current.currentY - dragState.current.startY;
+    if (distance > 92) {
+      onClose();
+    } else {
+      resetDrag();
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-end bg-black/55 px-3 pb-3 backdrop-blur-sm" onClick={onClose} role="presentation">
+    <div
+      className="absolute inset-0 z-50 flex items-end justify-center bg-black/55 px-3 pb-3 pt-3 backdrop-blur-sm sm:px-4 sm:pb-4"
+      onClick={onClose}
+      role="presentation"
+    >
       <div
-        className="w-full rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(14,18,25,0.98),rgba(7,9,13,0.98))] p-4 shadow-[0_26px_90px_rgba(0,0,0,0.55)]"
+        ref={panelRef}
+        className="w-full max-w-[480px] rounded-t-[28px] border border-white/10 border-b-0 bg-[linear-gradient(180deg,rgba(14,18,25,0.98),rgba(7,9,13,0.98))] p-4 shadow-[0_26px_90px_rgba(0,0,0,0.55)] transition-transform duration-300 ease-out sm:rounded-[28px] sm:border-b"
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label="Add someone"
+        style={{ maxHeight: "60dvh" }}
       >
+        <div
+          className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-white/18"
+          role="presentation"
+          onPointerDown={(event) => {
+            dragState.current = {
+              startY: event.clientY,
+              currentY: event.clientY,
+              dragging: true,
+            };
+          }}
+          onPointerMove={(event) => {
+            if (!dragState.current.dragging) return;
+            dragState.current.currentY = event.clientY;
+            if (panelRef.current) {
+              const distance = Math.max(0, event.clientY - dragState.current.startY);
+              panelRef.current.style.transform = `translateY(${Math.min(distance, 120)}px)`;
+            }
+          }}
+          onPointerUp={finishDrag}
+          onPointerCancel={resetDrag}
+        />
+
         <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/38">Add Someone</p>
-            <h3 className="mt-2 text-[22px] font-semibold tracking-[-0.03em] text-white">New contact</h3>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/38">Add Person</p>
+            <h3 className="mt-2 text-[22px] font-semibold tracking-[-0.03em] text-white">Add someone</h3>
           </div>
-          <button type="button" onClick={onClose} className="rounded-full border border-white/10 bg-white/6 px-3 py-2 text-[13px] font-medium text-white">
-            Close
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full border border-white/10 bg-white/6 px-3 py-2 text-[13px] font-medium text-white/82 transition active:scale-[0.98]"
+          >
+            Cancel
           </button>
         </div>
 
-        <div className="mt-4 space-y-3">
+        <div className="mt-5 space-y-4 overflow-y-auto pr-1">
           <div>
             <label htmlFor="contact-email" className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/36">
-              Email
+              Email Address
             </label>
             <input
               id="contact-email"
@@ -236,8 +305,10 @@ function AddContactSheet({
             }}
             className="flex min-h-[54px] w-full items-center justify-center rounded-[20px] bg-[linear-gradient(180deg,#93f4d5_0%,#65c9ad_100%)] px-5 text-[15px] font-semibold text-[#07110f] transition active:scale-[0.98]"
           >
-            Save
+            Continue
           </button>
+
+          <p className="pb-1 text-center text-[12px] leading-5 text-white/42">Saved contacts stay local to this device.</p>
         </div>
       </div>
     </div>
@@ -251,7 +322,6 @@ export function HomeScreen() {
   const latestArchive = archives[0] ?? null;
   const [addSheetOpen, setAddSheetOpen] = useState(false);
   const welcomeName = useMemo(() => profile.name.split(" ")[0] || "there", [profile.name]);
-
 
   const firstName = profile.loading ? "" : welcomeName;
   const archiveStatus = profile.archiveEnabled
@@ -342,4 +412,5 @@ export function HomeScreen() {
     </AppShell>
   );
 }
+
 

@@ -1,8 +1,9 @@
-"use client";
+﻿"use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell, Avatar, Badge, GlassCard, SectionHeader } from "@/components/letscall/mobile-shell";
+import { people } from "@/lib/letscall-data";
 import { disconnectGoogleProvider } from "@/lib/provider-session";
 import { clearLocalAuthSession, signInWithGoogleSession } from "@/lib/supabase-browser";
 import { isDebugAuthEnabled } from "@/lib/env";
@@ -15,6 +16,22 @@ export function ProfileScreen() {
   const profile = useSessionProfile();
   const { refreshProfile } = profile;
   const [isRefreshingChannel, setIsRefreshingChannel] = useState(false);
+  const [selectedPersonId, setSelectedPersonId] = useState(people[0]?.id ?? "");
+  const [inviteEmail, setInviteEmail] = useState("");
+
+  const selectedPerson = useMemo(
+    () => people.find((person) => person.id === selectedPersonId) ?? people[0],
+    [selectedPersonId],
+  );
+
+  const inviteHref = useMemo(() => {
+    const email = inviteEmail.trim();
+    if (!email) return "";
+
+    const subject = encodeURIComponent("Join me on LetsCall");
+    const body = encodeURIComponent("I’d love to save our calls and memories in LetsCall. Tap the link and sign in when you’re ready.");
+    return `mailto:${email}?subject=${subject}&body=${body}`;
+  }, [inviteEmail]);
 
   async function handleConnect() {
     if (typeof window === "undefined") {
@@ -74,7 +91,15 @@ export function ProfileScreen() {
 
   const isGoogleConnected = profile.signedIn && ["connected", "onboarding"].includes(profile.providerConnectionState);
   const isNoYouTubeState = isGoogleConnected && profile.youtubeConnected === false && Boolean(profile.youtubeReason);
-  const archiveBadge = profile.archiveEnabled ? "Archive Ready" : isNoYouTubeState ? "Needs YouTube Channel" : profile.providerConnectionState === "needs_reconnect" ? "Reconnect Required" : profile.signedIn ? "Google Connected" : "Not Connected";
+  const archiveBadge = profile.archiveEnabled
+    ? "Archive Ready"
+    : isNoYouTubeState
+      ? "Needs YouTube Channel"
+      : profile.providerConnectionState === "needs_reconnect"
+        ? "Reconnect Required"
+        : profile.signedIn
+          ? "Google Connected"
+          : "Not Connected";
   const statusText = profile.signedIn
     ? profile.archiveEnabled
       ? "Connected with Google and ready for archives"
@@ -86,20 +111,103 @@ export function ProfileScreen() {
     : "No active LetsCall session";
 
   return (
-    <AppShell activeTab="profile" title="Profile" subtitle="Your account and Google provider connection.">
+    <AppShell activeTab="profile" title="People" subtitle="Saved people, call shortcuts, and invites by email.">
       <div className="space-y-4">
-        <GlassCard className="p-5">
-          <div className="flex items-center gap-4">
-            <Avatar name={profile.name} imageUrl={profile.avatarUrl} size={68} />
-            <div className="min-w-0 flex-1">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/36">LetsCall Account</p>
-              <h2 className="mt-2 truncate text-[24px] font-semibold tracking-[-0.03em] text-white">
-                {profile.loading ? "Loading..." : profile.name}
-              </h2>
-              <p className="mt-1 truncate text-[14px] text-white/58">{profile.email}</p>
-            </div>
+        <section>
+          <SectionHeader eyebrow="Saved people" title="Saved people" />
+          <div className="space-y-3">
+            {people.map((person) => {
+              const isSelected = person.id === selectedPerson?.id;
+              return (
+                <button
+                  key={person.id}
+                  type="button"
+                  onClick={() => setSelectedPersonId(person.id)}
+                  className={`w-full text-left transition active:scale-[0.99] ${isSelected ? "scale-[0.995]" : ""}`}
+                >
+                  <GlassCard className={`p-4 ${isSelected ? "border-white/22 bg-white/10" : ""}`}>
+                    <div className="flex items-start gap-3">
+                      <Avatar name={person.name} imageUrl={null} size={52} />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/36">{person.relationship}</p>
+                        <h3 className="mt-2 truncate text-[18px] font-semibold tracking-[-0.02em] text-white">{person.name}</h3>
+                        <p className="mt-1 text-[13px] text-white/58">{person.lastSeen}</p>
+                      </div>
+                      <Badge>{isSelected ? "Open" : "Tap"}</Badge>
+                    </div>
+                    <p className="mt-3 text-[14px] leading-6 text-white/68">{person.note}</p>
+                  </GlassCard>
+                </button>
+              );
+            })}
           </div>
-        </GlassCard>
+        </section>
+
+        {selectedPerson ? (
+          <GlassCard className="p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/38">Tap person</p>
+                <h2 className="mt-2 text-[24px] font-semibold tracking-[-0.03em] text-white">{selectedPerson.name}</h2>
+                <p className="mt-2 text-[14px] leading-6 text-white/60">{selectedPerson.note}</p>
+              </div>
+              <Badge>{selectedPerson.relationship}</Badge>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <a
+                href={`/call?person=${encodeURIComponent(selectedPerson.name)}&mode=video`}
+                className="flex min-h-[54px] items-center justify-center rounded-[20px] bg-[linear-gradient(180deg,#93f4d5_0%,#65c9ad_100%)] px-5 text-[15px] font-semibold text-[#07110f] transition active:scale-[0.98]"
+              >
+                Video Call
+              </a>
+              <a
+                href={`/call?person=${encodeURIComponent(selectedPerson.name)}&mode=audio`}
+                className="flex min-h-[54px] items-center justify-center rounded-[20px] border border-white/10 bg-white/6 px-5 text-[15px] font-semibold text-white transition active:scale-[0.98]"
+              >
+                Audio Call
+              </a>
+            </div>
+            <button
+              type="button"
+              disabled
+              className="mt-3 flex min-h-[54px] w-full cursor-not-allowed items-center justify-center rounded-[20px] border border-dashed border-white/10 bg-white/4 px-5 text-[15px] font-semibold text-white/42"
+            >
+              Shared Memories later
+            </button>
+          </GlassCard>
+        ) : null}
+
+        <section>
+          <SectionHeader eyebrow="Add someone by email" title="Add someone by email" />
+          <GlassCard className="space-y-4 p-4">
+            <div>
+              <label className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/36" htmlFor="invite-email">
+                Email address
+              </label>
+              <input
+                id="invite-email"
+                type="email"
+                value={inviteEmail}
+                onChange={(event) => setInviteEmail(event.target.value)}
+                placeholder="name@example.com"
+                className="mt-2 h-14 w-full rounded-[20px] border border-white/10 bg-white/6 px-4 text-[15px] text-white outline-none placeholder:text-white/30 focus:border-white/20"
+              />
+            </div>
+            <a
+              href={inviteHref || undefined}
+              aria-disabled={!inviteHref}
+              className={`flex min-h-[54px] items-center justify-center rounded-[20px] px-5 text-[15px] font-semibold transition active:scale-[0.98] ${inviteHref ? "bg-[linear-gradient(180deg,#ff8f7d_0%,#ef5b48_100%)] text-white shadow-[0_18px_42px_rgba(239,91,72,0.28)]" : "cursor-not-allowed border border-white/10 bg-white/5 text-white/42"}`}
+              onClick={(event) => {
+                if (!inviteHref) {
+                  event.preventDefault();
+                }
+              }}
+            >
+              Send Invite
+            </a>
+            <p className="text-[12px] leading-5 text-white/52">We&apos;ll add address-book sync later. For now, this opens a ready-to-send email invite.</p>
+          </GlassCard>
+        </section>
 
         <section>
           <SectionHeader eyebrow="Provider" title="Google connection" />
@@ -157,7 +265,7 @@ export function ProfileScreen() {
                   Create YouTube Channel
                 </button>
                 <p className="px-2 text-center text-[12px] text-white/52">
-                  You'll return here after creating your channel.
+                  You&apos;ll return here after creating your channel.
                 </p>
                 <button
                   type="button"
