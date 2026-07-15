@@ -31,7 +31,7 @@ const tabs: Array<{
   {
     id: "memory",
     href: "/memory",
-    label: "New Memory",
+    label: "+",
     icon: (
       <>
         <path d="M12 5v14" strokeLinecap="round" />
@@ -53,7 +53,7 @@ const tabs: Array<{
   {
     id: "profile",
     href: "/profile",
-    label: "Profile",
+    label: "People",
     icon: (
       <>
         <circle cx="12" cy="9" r="3.4" />
@@ -99,7 +99,7 @@ export function AppShell({
                   {subtitle ? <p className="mt-3 max-w-[320px] text-[15px] leading-6 text-white/60">{subtitle}</p> : null}
                 </div>
                 <div className="rounded-full border border-white/10 bg-white/6 px-3 py-2 text-[12px] font-medium text-white/72 backdrop-blur-xl">
-                  {pathname === "/profile" ? "Private" : "Ready"}
+                  {pathname === "/profile" ? "People" : "Ready"}
                 </div>
               </div>
             </header>
@@ -131,7 +131,7 @@ export function AppShell({
                             <path d="M5 12h14" strokeLinecap="round" />
                           </svg>
                         </span>
-                        <span className="text-[10px] font-semibold tracking-[0.06em]">New Memory</span>
+                        <span className="text-[10px] font-semibold tracking-[0.06em]">+</span>
                       </Link>
                     );
                   }
@@ -299,5 +299,7 @@ export function SearchPill({ children }: { children: ReactNode }) {
     </button>
   );
 }
+
+
 
 
