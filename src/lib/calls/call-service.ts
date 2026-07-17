@@ -1,6 +1,7 @@
-import { connectCallSignalChannel, createCallRoom, disconnectCallSignalChannel, fetchCallSignals, sendCallSignal } from "@/lib/calls/signaling-client";
+import { connectCallSignalChannel, createCallRoom, disconnectCallSignalChannel, fetchCallSignals, sendCallSignal, type CreateCallOptions } from "@/lib/calls/signaling-client";
 import { createRecordingSession, type RecordingResult } from "@/lib/calls/recording-service";
 import type { CallCompletion, CallLifecycle, CallRole, CallSignalEnvelope, CallSnapshot } from "@/lib/calls/types";
+import { cancelInvitationByCallId } from "@/lib/contacts-client";
 
 type Listener = () => void;
 
@@ -50,7 +51,7 @@ const DEFAULT_STATE: CallState = {
   archiveMessage: null,
 };
 
-type TerminationReason = "local_end" | "remote_hangup" | "room_ended";
+type TerminationReason = "local_end" | "remote_hangup" | "room_ended" | "remote_declined";
 
 function getClientId() {
   if (typeof window === "undefined") {
@@ -320,6 +321,22 @@ class CallSessionController {
     return result;
   }
 
+  private syncLocalMediaState(
+    stream: MediaStream,
+    desiredState: { cameraEnabled: boolean; microphoneEnabled: boolean },
+  ) {
+    const videoTrack = getTrack(stream, "video");
+    const audioTrack = getTrack(stream, "audio");
+
+    if (videoTrack) {
+      videoTrack.enabled = desiredState.cameraEnabled;
+    }
+
+    if (audioTrack) {
+      audioTrack.enabled = desiredState.microphoneEnabled;
+    }
+  }
+
   private async createHostOffer() {
     if (!this.peerConnection || !this.state.callId || this.state.role !== "host") {
       return;
@@ -439,13 +456,20 @@ class CallSessionController {
         audio: true,
       });
 
+      const cameraEnabled = this.state.localStream ? this.state.cameraEnabled : true;
+      const microphoneEnabled = this.state.localStream ? this.state.microphoneEnabled : true;
+      this.syncLocalMediaState(stream, {
+        cameraEnabled,
+        microphoneEnabled,
+      });
+
       this.setState({
         localStream: stream,
         localStreamReady: true,
-        cameraEnabled: true,
+        cameraEnabled,
         cameraFacingMode: facingMode,
-        microphoneEnabled: true,
-        speakerEnabled: true,
+        microphoneEnabled,
+        speakerEnabled: this.state.speakerEnabled,
         statusMessage: this.state.role === "host" ? "Preparing your memory call..." : "Joining memory call...",
       });
 
@@ -459,8 +483,8 @@ class CallSessionController {
       return stream;
     } catch (error) {
       const message = error instanceof DOMException && ["NotAllowedError", "SecurityError"].includes(error.name)
-        ? "Camera and microphone are blocked on this connection. Open LetsCall over HTTPS or localhost, then allow permissions."
-        : describeError(error);
+        ? "Camera and microphone are blocked on this connection. Open LetsCall over HTTPS or localhost, then allow permissions.":
+        describeError(error);
       throw new Error(message || "Unable to access camera and microphone.");
     }
   }
@@ -737,6 +761,8 @@ class CallSessionController {
       since: this.lastSignalAt,
       messageCount: response.messages.length,
       roomEnded: response.roomEnded,
+      invitationStatus: response.invitationStatus,
+      invitationId: response.invitationId,
     });
 
     for (const message of response.messages) {
@@ -747,6 +773,12 @@ class CallSessionController {
     if (response.roomEnded) {
       this.transition("ending", { statusMessage: "The call has ended." }, { roomEnded: true });
       await this.terminateCall({ notifyPeer: false, reason: "room_ended" });
+      return;
+    }
+
+    if (this.state.role === "host" && response.invitationStatus && ["declined", "cancelled", "expired"].includes(response.invitationStatus)) {
+      this.transition("ending", { statusMessage: "The call was declined." }, { invitationStatus: response.invitationStatus });
+      await this.terminateCall({ notifyPeer: false, reason: "remote_declined" });
     }
   }
 
@@ -789,10 +821,18 @@ class CallSessionController {
       recording = await withTimeout(this.stopRecording(), 15000, "Timed out while finalizing the recording.");
 
       if (!recording) {
-        const message = this.hasStartedRecording
-          ? "No recording was produced for this call."
-          : "Recording never started before the call ended.";
-        this.failSession(message, { reason: options.reason });
+        this.transition(
+          "success",
+          {
+            recordingActive: false,
+            isSavingArchive: false,
+            archiveId: null,
+            archiveMessage: "Call ended.",
+            errorMessage: null,
+            statusMessage: "Call ended.",
+          },
+          { reason: options.reason, recording: false },
+        );
         return null;
       }
 
@@ -837,6 +877,14 @@ class CallSessionController {
       throw error;
     } finally {
       const activeCallId = this.state.callId;
+      if (activeCallId && this.state.role === "host") {
+        void cancelInvitationByCallId(activeCallId).catch((error) => {
+          logCallEvent("call_invitation_cancel_failed", {
+            callId: activeCallId,
+            error: describeError(error),
+          });
+        });
+      }
       this.stopTimers();
       this.stopPeerConnection();
       this.stopLocalStreams();
@@ -844,10 +892,10 @@ class CallSessionController {
       void disconnectCallSignalChannel(activeCallId);
     }
   }
-  async startHostCall() {
-    const response = await createCallRoom();
+  async startHostCall(options: CreateCallOptions = {}) {
+    const response = await createCallRoom(options);
     logLifecycleEvent("CALL_CREATED", { callId: response.callId, role: "host" });
-    logCallEvent("start_host_call", { callId: response.callId });
+    logCallEvent("start_host_call", { callId: response.callId, hasContactEmail: Boolean(options.contactEmail) });
     logJoinEvent("Call created", { callId: response.callId });
     await this.begin(response.callId, "host");
     this.setState({ inviteUrl: response.inviteUrl });
@@ -885,10 +933,15 @@ class CallSessionController {
         nextAudioTrack.enabled = audioTracks[0]?.enabled ?? true;
       }
 
+      this.syncLocalMediaState(nextStream, {
+        cameraEnabled: this.state.cameraEnabled,
+        microphoneEnabled: this.state.microphoneEnabled,
+      });
+
       this.setState({
         localStream: nextStream,
-        cameraEnabled: true,
         cameraFacingMode: nextFacingMode,
+        cameraEnabled: this.state.cameraEnabled,
         microphoneEnabled: nextAudioTrack ? nextAudioTrack.enabled : this.state.microphoneEnabled,
       });
       this.recordingSession?.updateLocalStream(nextStream);
@@ -1084,7 +1137,7 @@ const controller = new CallSessionController();
 export const CallService = {
   subscribe: (listener: Listener) => controller.subscribe(listener),
   getSnapshot: () => controller.getSnapshot(),
-  startHostCall: () => controller.startHostCall(),
+  startHostCall: (options?: CreateCallOptions) => controller.startHostCall(options ?? {}),
   joinCall: (callId: string) => controller.joinCall(callId),
   flipCamera: () => controller.flipCamera(),
   toggleCamera: () => controller.toggleCamera(),
@@ -1099,4 +1152,9 @@ export const CallService = {
   markFailed: (message: string) => controller.markFailed(message),
   getCompletion: () => controller.getCompletion(),
 };
+
+
+
+
+
 

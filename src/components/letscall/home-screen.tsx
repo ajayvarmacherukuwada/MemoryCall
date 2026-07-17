@@ -6,14 +6,8 @@ import { AppShell, Avatar, Badge, GlassCard, SectionHeader } from "@/components/
 import { useMemoryArchive } from "@/lib/memory-archive/storage";
 import type { MemoryArchiveRecord } from "@/lib/memory-archive/types";
 import { useSessionProfile } from "@/components/letscall/use-session-profile";
-
-type HomeContact = {
-  email: string;
-  nickname: string;
-  createdAt: string;
-};
-
-const CONTACTS_STORAGE_KEY = "letscall.home-contacts.v1";
+import { formatContactDisplayName, useContacts } from "@/components/letscall/use-contacts";
+import type { ContactSummary } from "@/lib/contacts-client";
 
 function formatDateLabel(value: string) {
   return new Intl.DateTimeFormat("en-US", {
@@ -26,59 +20,10 @@ function formatDuration(minutes: number) {
   return `${minutes} min`;
 }
 
-function readContacts(): HomeContact[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(CONTACTS_STORAGE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw) as HomeContact[];
-  } catch {
-    return [];
-  }
-}
-
-function writeContacts(contacts: HomeContact[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(CONTACTS_STORAGE_KEY, JSON.stringify(contacts));
-  window.dispatchEvent(new Event("letscall:home-contacts-changed"));
-}
-
-function useHomeContacts() {
-  const [contacts, setContacts] = useState<HomeContact[]>([]);
-
-  useEffect(() => {
-    const sync = () => setContacts(readContacts());
-    sync();
-    window.addEventListener("storage", sync);
-    window.addEventListener("letscall:home-contacts-changed", sync);
-    return () => {
-      window.removeEventListener("storage", sync);
-      window.removeEventListener("letscall:home-contacts-changed", sync);
-    };
-  }, []);
-
-  return {
-    contacts,
-    setContacts: (next: HomeContact[]) => setContacts(next),
-    refresh: () => setContacts(readContacts()),
-  };
-}
-
-function normalizeDisplayName(contact: HomeContact) {
-  const nickname = contact.nickname.trim();
-  if (nickname) return nickname;
-  const localPart = contact.email.split("@")[0] ?? contact.email;
-  return localPart
-    .split(/[._-]/g)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function describeContactConversation(contact: HomeContact, latestArchive: MemoryArchiveRecord | null) {
+function describeContactConversation(contact: ContactSummary, latestArchive: MemoryArchiveRecord | null) {
   if (!latestArchive) return "No calls yet";
   const haystack = `${latestArchive.title} ${latestArchive.description} ${latestArchive.collection}`.toLowerCase();
-  const needle = normalizeDisplayName(contact).toLowerCase();
+  const needle = formatContactDisplayName(contact).toLowerCase();
   if (haystack.includes(needle)) {
     return `${formatDateLabel(latestArchive.createdAt)}`;
   }
@@ -98,20 +43,18 @@ function ContactCard({
   contact,
   lastConversation,
 }: {
-  contact: HomeContact;
+  contact: ContactSummary;
   lastConversation: string;
 }) {
-  const displayName = normalizeDisplayName(contact);
-
   return (
     <GlassCard className="p-4">
       <div className="flex items-start gap-3">
-        <Avatar name={displayName} imageUrl={null} size={52} />
+        <Avatar name={contact.displayName} imageUrl={null} size={52} />
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-[18px] font-semibold tracking-[-0.02em] text-white">{displayName}</h3>
+          <h3 className="truncate text-[18px] font-semibold tracking-[-0.02em] text-white">{contact.displayName}</h3>
           <p className="mt-1 text-[13px] text-white/52">Saved contact</p>
         </div>
-        <Badge>Private</Badge>
+        <Badge>{contact.isOnline ? "Online" : "Offline"}</Badge>
       </div>
 
       <div className="mt-4 space-y-2 text-[13px] text-white/58">
@@ -123,13 +66,13 @@ function ContactCard({
 
       <div className="mt-4 grid grid-cols-2 gap-3">
         <Link
-          href={`/call?contact=${encodeURIComponent(contact.email)}&name=${encodeURIComponent(displayName)}&mode=video`}
+          href={`/call?contactId=${encodeURIComponent(contact.id)}&name=${encodeURIComponent(contact.displayName)}&mode=video`}
           className="flex min-h-[48px] items-center justify-center rounded-[18px] bg-[linear-gradient(180deg,#93f4d5_0%,#65c9ad_100%)] px-4 text-[14px] font-semibold text-[#07110f] transition active:scale-[0.98]"
         >
           Video Call
         </Link>
         <Link
-          href={`/call?contact=${encodeURIComponent(contact.email)}&name=${encodeURIComponent(displayName)}&mode=audio`}
+          href={`/call?contactId=${encodeURIComponent(contact.id)}&name=${encodeURIComponent(contact.displayName)}&mode=audio`}
           className="flex min-h-[48px] items-center justify-center rounded-[18px] border border-white/10 bg-white/6 px-4 text-[14px] font-semibold text-white transition active:scale-[0.98]"
         >
           Audio Call
@@ -164,10 +107,12 @@ function AddContactSheet({
 }: {
   open: boolean;
   onClose: () => void;
-  onSave: (contact: HomeContact) => void;
+  onSave: (contact: { email: string; nickname: string }) => Promise<void>;
 }) {
   const [email, setEmail] = useState("");
   const [nickname, setNickname] = useState("");
+  const [feedback, setFeedback] = useState<{ tone: "neutral" | "success" | "error"; message: string } | null>(null);
+  const [saving, setSaving] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const dragState = useRef({ startY: 0, currentY: 0, dragging: false });
 
@@ -175,6 +120,8 @@ function AddContactSheet({
     if (!open) {
       setEmail("");
       setNickname("");
+      setFeedback(null);
+      setSaving(false);
     }
   }, [open]);
 
@@ -212,6 +159,33 @@ function AddContactSheet({
       onClose();
     } else {
       resetDrag();
+    }
+  };
+
+  const handleSave = async () => {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) {
+      setFeedback({ tone: "error", message: "Please enter a valid email address." });
+      return;
+    }
+
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailPattern.test(normalizedEmail)) {
+      setFeedback({ tone: "error", message: "Please enter a valid email address." });
+      return;
+    }
+
+    setSaving(true);
+    setFeedback(null);
+
+    try {
+      await onSave({ email: normalizedEmail, nickname: nickname.trim() });
+      setFeedback({ tone: "success", message: "Contact added successfully." });
+      window.setTimeout(() => onClose(), 650);
+    } catch (error) {
+      setFeedback({ tone: "error", message: error instanceof Error ? error.message : "Unable to add this contact." });
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -297,18 +271,20 @@ function AddContactSheet({
 
           <button
             type="button"
-            onClick={() => {
-              const normalizedEmail = email.trim().toLowerCase();
-              if (!normalizedEmail) return;
-              onSave({ email: normalizedEmail, nickname: nickname.trim(), createdAt: new Date().toISOString() });
-              onClose();
-            }}
-            className="flex min-h-[54px] w-full items-center justify-center rounded-[20px] bg-[linear-gradient(180deg,#93f4d5_0%,#65c9ad_100%)] px-5 text-[15px] font-semibold text-[#07110f] transition active:scale-[0.98]"
+            onClick={handleSave}
+            disabled={saving}
+            className="flex min-h-[54px] w-full items-center justify-center rounded-[20px] bg-[linear-gradient(180deg,#93f4d5_0%,#65c9ad_100%)] px-5 text-[15px] font-semibold text-[#07110f] transition active:scale-[0.98] disabled:opacity-60"
           >
-            Continue
+            {saving ? "Saving..." : "Continue"}
           </button>
 
-          <p className="pb-1 text-center text-[12px] leading-5 text-white/42">Saved contacts stay local to this device.</p>
+          {feedback ? (
+            <p className={`pb-1 text-center text-[12px] leading-5 ${feedback.tone === "success" ? "text-emerald-200" : feedback.tone === "error" ? "text-rose-200" : "text-white/42"}`}>
+              {feedback.message}
+            </p>
+          ) : (
+            <p className="pb-1 text-center text-[12px] leading-5 text-white/42">Saved contacts stay private in your people list.</p>
+          )}
         </div>
       </div>
     </div>
@@ -317,27 +293,17 @@ function AddContactSheet({
 
 export function HomeScreen() {
   const profile = useSessionProfile();
-  const { contacts, setContacts } = useHomeContacts();
+  const contacts = useContacts(profile.signedIn);
   const archives = useMemoryArchive();
   const latestArchive = archives[0] ?? null;
   const [addSheetOpen, setAddSheetOpen] = useState(false);
   const welcomeName = useMemo(() => profile.name.split(" ")[0] || "there", [profile.name]);
 
   const firstName = profile.loading ? "" : welcomeName;
-  const archiveStatus = profile.archiveEnabled
-    ? "Archive Ready"
-    : profile.providerConnectionState === "onboarding"
-      ? "Needs YouTube Channel"
-      : profile.providerConnectionState === "needs_reconnect"
-        ? "Reconnect Required"
-        : profile.signedIn
-          ? "Google Connected"
-          : "Guest";
 
-  const addContact = (contact: HomeContact) => {
-    const next = [contact, ...contacts.filter((item) => item.email !== contact.email)];
-    setContacts(next);
-    writeContacts(next);
+  const addContact = async (contact: { email: string; nickname: string }) => {
+    await contacts.addContact(contact);
+    await contacts.refreshContacts();
   };
 
   return (
@@ -354,15 +320,14 @@ export function HomeScreen() {
         <section>
           <SectionHeader eyebrow="People" title="Your People" />
           <div className="space-y-3">
-            {contacts.length === 0 ? (
-              <EmptyCard
-                title="No people yet."
-                description="Add someone to start your first private conversation."
-              />
+            {contacts.loading ? (
+              <EmptyCard title="Loading people..." description="Fetching your saved contacts." />
+            ) : contacts.contacts.length === 0 ? (
+              <EmptyCard title="No people yet." description="Add someone to start your first private conversation." />
             ) : (
-              contacts.map((contact) => (
+              contacts.contacts.map((contact) => (
                 <ContactCard
-                  key={contact.email}
+                  key={contact.id}
                   contact={contact}
                   lastConversation={describeContactConversation(contact, latestArchive)}
                 />
@@ -380,7 +345,7 @@ export function HomeScreen() {
                   <div className="min-w-0">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/36">Latest call</p>
                     <h3 className="mt-2 text-[18px] font-semibold tracking-[-0.02em] text-white">{latestArchive.title}</h3>
-                    <p className="mt-1 text-[13px] text-white/52">{latestArchive.collection} · {formatDateLabel(latestArchive.createdAt)}</p>
+                    <p className="mt-1 text-[13px] text-white/52">{latestArchive.collection} � {formatDateLabel(latestArchive.createdAt)}</p>
                   </div>
                   <Badge>{formatDuration(latestArchive.duration)}</Badge>
                 </div>
@@ -412,5 +377,4 @@ export function HomeScreen() {
     </AppShell>
   );
 }
-
 

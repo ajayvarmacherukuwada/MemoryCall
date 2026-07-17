@@ -3,6 +3,7 @@ import { authenticateSupabaseRequest } from "@/lib/server/supabase-admin";
 import { ensureProfileRow } from "@/lib/server/profile";
 import { fetchGoogleUserInfo } from "@/lib/server/google-oauth";
 import { getGoogleProviderSession, syncGoogleProviderConnection } from "@/lib/server/google-provider";
+import { readDeviceSessionMetadata, touchDeviceSession } from "@/lib/server/device-sessions";
 
 export const runtime = "nodejs";
 
@@ -55,6 +56,7 @@ function getErrorMessage(error: unknown) {
 export async function POST(request: Request) {
   try {
     const { user } = await authenticateSupabaseRequest(request);
+    const deviceSession = readDeviceSessionMetadata(request);
     const body = (await request.json().catch(() => null)) as GoogleCompleteBody | null;
     const accessToken = body?.accessToken?.trim() ?? "";
 
@@ -69,6 +71,10 @@ export async function POST(request: Request) {
       displayName: googleUser.name ?? user.email ?? null,
       photoUrl: googleUser.picture ?? null,
     });
+
+    if (deviceSession) {
+      await touchDeviceSession(user.id, deviceSession);
+    }
 
     const syncResult = await syncGoogleProviderConnection({
       profileId: user.id,

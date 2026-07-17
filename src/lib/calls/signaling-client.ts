@@ -1,6 +1,7 @@
 "use client";
 
 import type { RealtimeChannel } from "@supabase/supabase-js";
+import { authFetch } from "@/lib/auth-client";
 import { getBrowserSupabaseClient } from "@/lib/supabase-browser";
 
 export type CallSignalEnvelope = {
@@ -16,6 +17,13 @@ export type CallSignalEnvelope = {
 export type CreateCallResponse = {
   callId: string;
   inviteUrl: string;
+  invitationId?: string | null;
+};
+
+export type CreateCallOptions = {
+  contactId?: string | null;
+  contactEmail?: string | null;
+  mode?: "video" | "audio";
 };
 
 type CallRoomInfo = {
@@ -40,6 +48,13 @@ type ActiveSignalChannel = {
   ready: Promise<void>;
   queue: CallSignalEnvelope[];
   nextSequence: number;
+};
+
+export type FetchCallSignalsResponse = {
+  messages: CallSignalEnvelope[];
+  roomEnded: boolean;
+  invitationStatus: "pending" | "accepted" | "declined" | "cancelled" | "expired" | null;
+  invitationId: string | null;
 };
 
 let activeChannel: ActiveSignalChannel | null = null;
@@ -175,21 +190,34 @@ export async function disconnectCallSignalChannel(callId?: string | null) {
   await removeActiveChannel();
 }
 
-export async function createCallRoom() {
-  logSignalApiEvent("create_call_request", { requestUrl: "/api/calls" });
-  const response = await fetch("/api/calls", { method: "POST" });
-  const bodyText = await response.clone().text();
+export async function createCallRoom(options: CreateCallOptions = {}) {
+  logSignalApiEvent("create_call_request", {
+    requestUrl: "/api/calls",
+    hasContactId: Boolean(options.contactId),
+    hasContactEmail: Boolean(options.contactEmail),
+  });
+  const response = await authFetch<CreateCallResponse>("/api/calls", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      contactId: options.contactId ?? null,
+      contactEmail: options.contactEmail ?? null,
+      mode: options.mode ?? "video",
+    }),
+  });
+  const bodyText = JSON.stringify(response);
   logSignalApiEvent("create_call_response", {
     requestUrl: "/api/calls",
-    status: response.status,
-    ok: response.ok,
+    ok: true,
     body: bodyText,
   });
-  if (!response.ok) {
+  if (!response.callId || !response.inviteUrl) {
     throw new Error("Unable to create a call room.");
   }
 
-  return await parseJson<CreateCallResponse>(response);
+  return response;
 }
 
 export async function getCallRoomInfo(callId: string) {
@@ -238,14 +266,29 @@ export async function fetchCallSignals(callId: string, since = 0) {
     state.queue.splice(0, messages.length);
   }
 
+  const response = await authFetch<{ roomEnded: boolean; invitationStatus: FetchCallSignalsResponse["invitationStatus"]; invitationId: string | null }>(
+    `/api/calls/${encodeURIComponent(callId)}/signal?since=${encodeURIComponent(String(since))}`,
+    {
+      method: "GET",
+      cache: "no-store",
+    },
+  );
+
   logSignalApiEvent("poll_signals_response", {
     callId,
     since,
     messageCount: messages.length,
+    invitationStatus: response.invitationStatus,
+    invitationId: response.invitationId,
+    roomEnded: response.roomEnded,
   });
 
   return {
     messages,
-    roomEnded: messages.some((message) => message.type === "hangup"),
-  };
+    roomEnded: response.roomEnded || messages.some((message) => message.type === "hangup"),
+    invitationStatus: response.invitationStatus,
+    invitationId: response.invitationId,
+  } satisfies FetchCallSignalsResponse;
 }
+
+

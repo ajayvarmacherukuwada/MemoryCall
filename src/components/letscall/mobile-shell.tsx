@@ -1,9 +1,11 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { useEffect } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import type { AppTab, CollectionTone } from "@/lib/letscall-data";
+import { fetchIncomingInvitation } from "@/lib/contacts-client";
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -83,6 +85,39 @@ export function AppShell({
   children: ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (pathname.startsWith("/call") || pathname.startsWith("/incoming")) {
+      return;
+    }
+
+    let cancelled = false;
+    let intervalId: number | null = null;
+
+    const checkIncomingInvitation = async () => {
+      try {
+        const response = await fetchIncomingInvitation();
+        if (!cancelled && response.invitation) {
+          router.replace(`/incoming/${encodeURIComponent(response.invitation.id)}`);
+        }
+      } catch {
+        // No active session or no incoming invitation yet.
+      }
+    };
+
+    void checkIncomingInvitation();
+    intervalId = window.setInterval(() => {
+      void checkIncomingInvitation();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+      }
+    };
+  }, [pathname, router]);
 
   return (
     <div className="min-h-dvh overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(120,197,173,0.16),_transparent_22%),radial-gradient(circle_at_bottom,_rgba(68,121,255,0.12),_transparent_26%),linear-gradient(180deg,#07090d_0%,#05070b_40%,#030406_100%)] text-white">
@@ -315,3 +350,5 @@ export function SearchPill({ children }: { children: ReactNode }) {
     </button>
   );
 }
+
+

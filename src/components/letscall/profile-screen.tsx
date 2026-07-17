@@ -1,13 +1,13 @@
-﻿"use client";
+"use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell, Avatar, Badge, GlassCard, SectionHeader } from "@/components/letscall/mobile-shell";
-import { people } from "@/lib/letscall-data";
 import { disconnectGoogleProvider } from "@/lib/provider-session";
 import { clearLocalAuthSession, signInWithGoogleSession } from "@/lib/supabase-browser";
 import { isDebugAuthEnabled } from "@/lib/env";
 import { useSessionProfile } from "@/components/letscall/use-session-profile";
+import { useContacts } from "@/components/letscall/use-contacts";
 
 const YOUTUBE_CREATE_CHANNEL_URL = "https://www.youtube.com/create_channel";
 
@@ -15,13 +15,20 @@ export function ProfileScreen() {
   const router = useRouter();
   const profile = useSessionProfile();
   const { refreshProfile } = profile;
+  const contacts = useContacts(profile.signedIn);
   const [isRefreshingChannel, setIsRefreshingChannel] = useState(false);
-  const [selectedPersonId, setSelectedPersonId] = useState(people[0]?.id ?? "");
+  const [selectedContactId, setSelectedContactId] = useState<string>("");
   const [inviteEmail, setInviteEmail] = useState("");
 
-  const selectedPerson = useMemo(
-    () => people.find((person) => person.id === selectedPersonId) ?? people[0],
-    [selectedPersonId],
+  useEffect(() => {
+    if (!selectedContactId && contacts.contacts[0]) {
+      setSelectedContactId(contacts.contacts[0].id);
+    }
+  }, [contacts.contacts, selectedContactId]);
+
+  const selectedContact = useMemo(
+    () => contacts.contacts.find((contact) => contact.id === selectedContactId) ?? contacts.contacts[0] ?? null,
+    [contacts.contacts, selectedContactId],
   );
 
   const inviteHref = useMemo(() => {
@@ -29,7 +36,7 @@ export function ProfileScreen() {
     if (!email) return "";
 
     const subject = encodeURIComponent("Join me on LetsCall");
-    const body = encodeURIComponent("I’d love to save our calls and memories in LetsCall. Tap the link and sign in when you’re ready.");
+    const body = encodeURIComponent("I�d love to save our calls and memories in LetsCall. Tap the link and sign in when you�re ready.");
     return `mailto:${email}?subject=${subject}&body=${body}`;
   }, [inviteEmail]);
 
@@ -116,52 +123,63 @@ export function ProfileScreen() {
         <section>
           <SectionHeader eyebrow="Saved people" title="Saved people" />
           <div className="space-y-3">
-            {people.map((person) => {
-              const isSelected = person.id === selectedPerson?.id;
-              return (
-                <button
-                  key={person.id}
-                  type="button"
-                  onClick={() => setSelectedPersonId(person.id)}
-                  className={`w-full text-left transition active:scale-[0.99] ${isSelected ? "scale-[0.995]" : ""}`}
-                >
-                  <GlassCard className={`p-4 ${isSelected ? "border-white/22 bg-white/10" : ""}`}>
-                    <div className="flex items-start gap-3">
-                      <Avatar name={person.name} imageUrl={null} size={52} />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/36">{person.relationship}</p>
-                        <h3 className="mt-2 truncate text-[18px] font-semibold tracking-[-0.02em] text-white">{person.name}</h3>
-                        <p className="mt-1 text-[13px] text-white/58">{person.lastSeen}</p>
+            {contacts.loading ? (
+              <GlassCard className="p-4">
+                <p className="text-[14px] text-white/58">Loading contacts...</p>
+              </GlassCard>
+            ) : contacts.contacts.length === 0 ? (
+              <GlassCard className="p-4">
+                <p className="text-[17px] font-semibold tracking-[-0.02em] text-white">No people yet.</p>
+                <p className="mt-2 text-[14px] leading-6 text-white/58">Add someone on Home to start your first private conversation.</p>
+              </GlassCard>
+            ) : (
+              contacts.contacts.map((contact) => {
+                const isSelected = contact.id === selectedContact?.id;
+                return (
+                  <button
+                    key={contact.id}
+                    type="button"
+                    onClick={() => setSelectedContactId(contact.id)}
+                    className={`w-full text-left transition active:scale-[0.99] ${isSelected ? "scale-[0.995]" : ""}`}
+                  >
+                    <GlassCard className={`p-4 ${isSelected ? "border-white/22 bg-white/10" : ""}`}>
+                      <div className="flex items-start gap-3">
+                        <Avatar name={contact.displayName} imageUrl={null} size={52} />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/36">{contact.isOnline ? "Online" : "Offline"}</p>
+                          <h3 className="mt-2 truncate text-[18px] font-semibold tracking-[-0.02em] text-white">{contact.displayName}</h3>
+                          <p className="mt-1 text-[13px] text-white/58">{contact.lastSeenAt ? `Last seen ${new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(new Date(contact.lastSeenAt))}` : "Saved contact"}</p>
+                        </div>
+                        <Badge>{isSelected ? "Open" : "Tap"}</Badge>
                       </div>
-                      <Badge>{isSelected ? "Open" : "Tap"}</Badge>
-                    </div>
-                    <p className="mt-3 text-[14px] leading-6 text-white/68">{person.note}</p>
-                  </GlassCard>
-                </button>
-              );
-            })}
+                      <p className="mt-3 text-[14px] leading-6 text-white/68">Tap to open a private call shortcut.</p>
+                    </GlassCard>
+                  </button>
+                );
+              })
+            )}
           </div>
         </section>
 
-        {selectedPerson ? (
+        {selectedContact ? (
           <GlassCard className="p-5">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/38">Tap person</p>
-                <h2 className="mt-2 text-[24px] font-semibold tracking-[-0.03em] text-white">{selectedPerson.name}</h2>
-                <p className="mt-2 text-[14px] leading-6 text-white/60">{selectedPerson.note}</p>
+                <h2 className="mt-2 text-[24px] font-semibold tracking-[-0.03em] text-white">{selectedContact.displayName}</h2>
+                <p className="mt-2 text-[14px] leading-6 text-white/60">{selectedContact.isOnline ? "Online now" : "Offline right now"}</p>
               </div>
-              <Badge>{selectedPerson.relationship}</Badge>
+              <Badge>{selectedContact.isOnline ? "Ready" : "Offline"}</Badge>
             </div>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <a
-                href={`/call?person=${encodeURIComponent(selectedPerson.name)}&mode=video`}
+                href={`/call?contactId=${encodeURIComponent(selectedContact.id)}&name=${encodeURIComponent(selectedContact.displayName)}&mode=video`}
                 className="flex min-h-[54px] items-center justify-center rounded-[20px] bg-[linear-gradient(180deg,#93f4d5_0%,#65c9ad_100%)] px-5 text-[15px] font-semibold text-[#07110f] transition active:scale-[0.98]"
               >
                 Video Call
               </a>
               <a
-                href={`/call?person=${encodeURIComponent(selectedPerson.name)}&mode=audio`}
+                href={`/call?contactId=${encodeURIComponent(selectedContact.id)}&name=${encodeURIComponent(selectedContact.displayName)}&mode=audio`}
                 className="flex min-h-[54px] items-center justify-center rounded-[20px] border border-white/10 bg-white/6 px-5 text-[15px] font-semibold text-white transition active:scale-[0.98]"
               >
                 Audio Call
@@ -293,3 +311,4 @@ export function ProfileScreen() {
     </AppShell>
   );
 }
+

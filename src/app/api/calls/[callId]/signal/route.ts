@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { appendCallSignalMessage, getCallRoomInfo, listCallMessages } from "@/lib/calls/call-store";
 import type { CallSignalMessage } from "@/lib/calls/types";
+import { getInvitationByCallId } from "@/lib/server/contacts";
 
 function parseSince(value: string | null) {
   const parsed = Number(value ?? "0");
@@ -23,15 +24,22 @@ export async function GET(request: Request, context: { params: Promise<{ callId:
   const since = parseSince(url.searchParams.get("since"));
   logApiEvent("Signal poll start", { callId, since, requestOrigin: url.origin });
   const messages = listCallMessages(callId, since);
+  const invitation = await getInvitationByCallId(callId);
   logApiEvent("Signal poll result", {
     callId,
     since,
     requestOrigin: url.origin,
     messageCount: messages.length,
     roomEnded: info.endedAt !== null,
+    invitationStatus: invitation?.status ?? null,
   });
 
-  return NextResponse.json({ messages, roomEnded: info.endedAt !== null });
+  return NextResponse.json({
+    messages,
+    roomEnded: info.endedAt !== null,
+    invitationStatus: invitation?.status ?? null,
+    invitationId: invitation?.id ?? null,
+  });
 }
 
 export async function POST(request: Request, context: { params: Promise<{ callId: string }> }) {
@@ -91,3 +99,4 @@ export async function POST(request: Request, context: { params: Promise<{ callId
 
   return NextResponse.json({ ok: true });
 }
+

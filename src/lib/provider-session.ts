@@ -1,6 +1,7 @@
 "use client";
 
 import { getBrowserSupabaseClient, type GoogleProviderTokenHandoff } from "@/lib/supabase-browser";
+import { authFetch } from "@/lib/auth-client";
 
 export type ProviderConnectionState = "connected" | "onboarding" | "needs_reconnect" | "revoked" | "disabled" | "missing";
 
@@ -28,41 +29,6 @@ export type ProviderSessionResponse = {
   youtubeConnected?: boolean;
   youtubeReason?: string | null;
 };
-
-async function getSupabaseAccessToken() {
-  const supabase = getBrowserSupabaseClient();
-  const { data, error } = await supabase.auth.getSession();
-  if (error) {
-    throw error;
-  }
-
-  return data.session?.access_token ?? null;
-}
-
-async function authFetch<T>(input: string, init: RequestInit = {}) {
-  const accessToken = await getSupabaseAccessToken();
-  if (!accessToken) {
-    throw new Error("Missing Supabase session. Please sign in again.");
-  }
-
-  const headers = new Headers(init.headers);
-  headers.set("Authorization", `Bearer ${accessToken}`);
-
-  const response = await fetch(input, {
-    ...init,
-    headers,
-  });
-
-  const body = (await response.json().catch(() => null)) as T | null;
-  if (!response.ok) {
-    const message = body && typeof body === "object" && body && "error" in body ? String((body as { error?: string }).error ?? "Request failed") : "Request failed";
-    const error = new Error(message);
-    (error as Error & { code?: string }).code = body && typeof body === "object" && body && "code" in body ? String((body as { code?: string }).code ?? "request_failed") : "request_failed";
-    throw error;
-  }
-
-  return body as T;
-}
 
 export async function fetchProviderSession() {
   const response = await authFetch<ProviderSessionResponse>("/api/auth/session", { method: "GET" });
@@ -110,4 +76,14 @@ export async function startGoogleProviderConnection(redirectTo = "/profile") {
 
 export async function disconnectGoogleProvider() {
   await authFetch<{ ok: true }>("/api/auth/google/disconnect", { method: "POST" });
+}
+
+export async function refreshBrowserSupabaseSession() {
+  const supabase = getBrowserSupabaseClient();
+  const { data, error } = await supabase.auth.getSession();
+  if (error) {
+    throw error;
+  }
+
+  return data.session ?? null;
 }

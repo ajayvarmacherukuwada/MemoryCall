@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { getBrowserSupabaseClient, restoreBrowserSessionFromUrlHash } from "@/lib/supabase-browser";
 import { completeGoogleProviderConnection, fetchProviderSession, type ProviderSessionSnapshot } from "@/lib/provider-session";
+import { touchSessionPresence } from "@/lib/auth-client";
 
 type SessionProfile = ProviderSessionSnapshot & {
   loading: boolean;
@@ -98,9 +99,30 @@ export function useSessionProfile(): SessionProfileWithActions {
   useEffect(() => {
     const supabase = getBrowserSupabaseClient();
     let isCancelled = false;
+    let heartbeatTimer: number | null = null;
+
+    const stopHeartbeat = () => {
+      if (heartbeatTimer !== null) {
+        window.clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+    };
+
+    const startHeartbeat = () => {
+      if (heartbeatTimer !== null) {
+        return;
+      }
+
+      heartbeatTimer = window.setInterval(() => {
+        void touchSessionPresence().catch(() => {
+          // Presence heartbeat is best-effort.
+        });
+      }, 30000);
+    };
 
     const resetToGuest = () => {
       if (isCancelled) return;
+      stopHeartbeat();
       setProfile((current) => guestProfileState(current));
     };
 
@@ -110,6 +132,7 @@ export function useSessionProfile(): SessionProfileWithActions {
         if (error) throw error;
 
         if (!data.session?.access_token) {
+          stopHeartbeat();
           if (!isCancelled) {
             setProfile((current) => guestProfileState(current));
           }
@@ -117,6 +140,10 @@ export function useSessionProfile(): SessionProfileWithActions {
         }
 
         const session = await fetchProviderSession();
+        void touchSessionPresence().catch(() => {
+          // Presence heartbeat is best-effort.
+        });
+        startHeartbeat();
 
         if (!isCancelled) {
           setProfile({ loading: false, ...toSessionProfile(session) });
@@ -124,6 +151,7 @@ export function useSessionProfile(): SessionProfileWithActions {
 
         return session;
       } catch {
+        stopHeartbeat();
         if (!isCancelled) {
           setProfile((current) => ({
             ...current,
@@ -165,6 +193,7 @@ export function useSessionProfile(): SessionProfileWithActions {
 
     return () => {
       isCancelled = true;
+      stopHeartbeat();
       window.removeEventListener("letscall-auth-reset", handleAuthReset);
       authListener.subscription.unsubscribe();
     };

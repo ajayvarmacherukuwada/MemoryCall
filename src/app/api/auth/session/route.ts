@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { authenticateSupabaseRequest } from "@/lib/server/supabase-admin";
 import { ensureProfileRow } from "@/lib/server/profile";
 import { getGoogleProviderSession } from "@/lib/server/google-provider";
+import { readDeviceSessionMetadata, touchDeviceSession } from "@/lib/server/device-sessions";
 
 export const runtime = "nodejs";
 
@@ -47,6 +48,10 @@ export async function GET(request: Request) {
   try {
     const { user } = await authenticateSupabaseRequest(request);
     const profile = await ensureProfileRow(user);
+    const deviceSession = readDeviceSessionMetadata(request);
+    if (deviceSession) {
+      await touchDeviceSession(user.id, deviceSession);
+    }
     const providerSession = await getGoogleProviderSession(user.id);
     const session = {
       ...providerSession,

@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -424,8 +424,10 @@ export function CallScreen() {
   const profile = useSessionProfile();
   const routeCallId = typeof params?.callId === "string" ? params.callId : Array.isArray(params?.callId) ? params.callId[0] ?? null : null;
   const contactNameFromUrl = searchParams.get("name") ?? searchParams.get("person") ?? searchParams.get("contact") ?? "";
+  const contactIdFromUrl = searchParams.get("contactId") ?? null;
+  const callModeFromUrl = searchParams.get("mode") === "audio" ? "audio" : "video";
+  const hasAutoCallIntent = Boolean(routeCallId || contactIdFromUrl || searchParams.get("person") || searchParams.get("contact") || searchParams.get("join"));
   const contactDisplayName = formatContactLabel(contactNameFromUrl);
-  const hasAutoCallIntent = Boolean(routeCallId || searchParams.get("person") || searchParams.get("contact") || searchParams.get("join"));
 
   useEffect(() => {
     return CallService.subscribe(() => setSnapshot(CallService.getSnapshot()));
@@ -471,19 +473,6 @@ export function CallScreen() {
     });
   }, [busy, isJoinButtonEnabled, isJoinCodeValid, normalizedJoinCode]);
 
-  useEffect(() => {
-    const completion = CallService.getCompletion();
-    if (!completion || archiveStartedRef.current) {
-      return;
-    }
-    if (snapshot.lifecycle !== "finalizing_recording") {
-      return;
-    }
-    archiveStartedRef.current = true;
-    completionRef.current = completion;
-    void archiveCompletion(completion);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snapshot.lifecycle, snapshot.callId]);
 
   useEffect(() => {
     return () => {
@@ -525,7 +514,7 @@ export function CallScreen() {
   const callSubtitle =
     snapshot.lifecycle === "connected" || snapshot.lifecycle === "recording" || snapshot.lifecycle === "finalizing_recording" || snapshot.lifecycle === "archiving"
       ? snapshot.elapsedSeconds > 0
-        ? `${status} · ${formatDuration(snapshot.elapsedSeconds)}`
+        ? `${status} ï¿½ ${formatDuration(snapshot.elapsedSeconds)}`
         : status
       : status;
 
@@ -601,7 +590,7 @@ export function CallScreen() {
     console.info("[CALL API]", JSON.stringify({ step: "Sending create call request", at: new Date().toISOString() }));
 
     try {
-      const response = await CallService.startHostCall();
+      const response = await CallService.startHostCall(contactIdFromUrl ? { contactId: contactIdFromUrl, mode: callModeFromUrl } : { mode: callModeFromUrl });
       router.replace(`/call/${encodeURIComponent(response.callId)}`);
       console.info("[CALL API]", JSON.stringify({ step: "Create call response received", at: new Date().toISOString(), callId: response.callId }));
     } catch (error) {
@@ -661,22 +650,21 @@ export function CallScreen() {
       });
 
       if (!completion?.recording) {
-        const message = "No recording was produced for this call.";
-        setArchiveError(message);
-        CallService.markFailed(message);
+        setArchiveError(null);
+        setArchiveSetupRequired(false);
+        setArchiveMessage("Call ended.");
+        router.replace("/");
         return;
       }
 
-      if (!profile.archiveEnabled) {
-        setArchiveSetupRequired(true);
-        const message = "Archive setup required. Create a free YouTube channel to enable automatic memory archiving.";
-        setArchiveError(message);
-        setArchiveMessage(message);
-        CallService.markFailed(message);
+      const shouldArchive = window.confirm("Recording available. Do you want to archive this memory?");
+      if (!shouldArchive) {
+        router.replace("/");
         return;
       }
 
       setArchiveMessage("Finalizing recording...");
+      await archiveCompletion(completion);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to end the call.";
       setArchiveError(message);
@@ -815,3 +803,7 @@ export function CallScreen() {
     </div>
   );
 }
+
+
+
+
