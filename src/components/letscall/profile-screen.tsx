@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell, Avatar, Badge, GlassCard, SectionHeader } from "@/components/letscall/mobile-shell";
-import { disconnectGoogleProvider } from "@/lib/provider-session";
+import { disconnectGoogleProvider, startGoogleProviderConnection } from "@/lib/provider-session";
 import { clearLocalAuthSession, signInWithGoogleSession } from "@/lib/supabase-browser";
 import { isDebugAuthEnabled } from "@/lib/env";
 import { useSessionProfile } from "@/components/letscall/use-session-profile";
@@ -36,7 +36,7 @@ export function ProfileScreen() {
     if (!email) return "";
 
     const subject = encodeURIComponent("Join me on LetsCall");
-    const body = encodeURIComponent("I�d love to save our calls and memories in LetsCall. Tap the link and sign in when you�re ready.");
+    const body = encodeURIComponent("Iï¿½d love to save our calls and memories in LetsCall. Tap the link and sign in when youï¿½re ready.");
     return `mailto:${email}?subject=${subject}&body=${body}`;
   }, [inviteEmail]);
 
@@ -46,7 +46,11 @@ export function ProfileScreen() {
     }
 
     try {
-      await signInWithGoogleSession("/profile");
+      if (profile.signedIn) {
+        await startGoogleProviderConnection("/profile");
+      } else {
+        await signInWithGoogleSession("/profile");
+      }
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "Unable to connect Google.");
     }
@@ -269,7 +273,7 @@ export function ProfileScreen() {
                 onClick={handleConnect}
                 className="flex min-h-[56px] items-center justify-center rounded-[24px] bg-[linear-gradient(180deg,#93f4d5_0%,#65c9ad_100%)] px-5 text-[16px] font-semibold text-[#07110f] shadow-[0_18px_42px_rgba(87,209,171,0.3)] transition active:scale-[0.98]"
               >
-                {profile.signedIn ? "Reconnect Google" : "Sign in with Google"}
+                {profile.signedIn ? (isGoogleConnected ? "Disconnect Google" : "Connect Google") : "Continue with Google"}
               </button>
             )}
 

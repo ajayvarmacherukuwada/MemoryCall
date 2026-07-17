@@ -174,17 +174,10 @@ export async function clearLocalAuthSession() {
 export async function signInWithGoogleSession(redirectTo = "/profile") {
   const supabase = getBrowserSupabaseClient();
   const absoluteRedirectTo = new URL(redirectTo, window.location.origin).toString();
-
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
       redirectTo: absoluteRedirectTo,
-      scopes: GOOGLE_WEB_SCOPES.archiveAccess,
-      queryParams: {
-        access_type: "offline",
-        prompt: "consent",
-        include_granted_scopes: "false",
-      },
     },
   });
 
