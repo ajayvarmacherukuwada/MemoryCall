@@ -36,7 +36,7 @@ export function ProfileScreen() {
     if (!email) return "";
 
     const subject = encodeURIComponent("Join me on LetsCall");
-    const body = encodeURIComponent("Iï¿½d love to save our calls and memories in LetsCall. Tap the link and sign in when youï¿½re ready.");
+    const body = encodeURIComponent("IÃ¯Â¿Â½d love to save our calls and memories in LetsCall. Tap the link and sign in when youÃ¯Â¿Â½re ready.");
     return `mailto:${email}?subject=${subject}&body=${body}`;
   }, [inviteEmail]);
 
@@ -108,9 +108,11 @@ export function ProfileScreen() {
       ? "Needs YouTube Channel"
       : profile.providerConnectionState === "needs_reconnect"
         ? "Reconnect Required"
-        : profile.signedIn
-          ? "Google Connected"
-          : "Not Connected";
+        : profile.signedIn && profile.providerConnectionState === "missing"
+          ? "Google Not Connected"
+          : profile.signedIn
+            ? "Google Connected"
+            : "Not Connected";
   const statusText = profile.signedIn
     ? profile.archiveEnabled
       ? "Connected with Google and ready for archives"
@@ -118,7 +120,9 @@ export function ProfileScreen() {
         ? "Google is connected, but no YouTube channel was found for this account."
         : profile.providerConnectionState === "needs_reconnect"
           ? "Google needs to be reconnected to continue archiving."
-          : "Sign in with Google to finish connecting your archive provider."
+          : profile.providerConnectionState === "missing"
+            ? "Signed in to MemoryCall. Connect Google to enable archiving features."
+            : "Google is connected."
     : "No active LetsCall session";
 
   return (
