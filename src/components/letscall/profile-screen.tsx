@@ -18,7 +18,6 @@ export function ProfileScreen() {
   const contacts = useContacts(profile.signedIn);
   const [isRefreshingChannel, setIsRefreshingChannel] = useState(false);
   const [selectedContactId, setSelectedContactId] = useState<string>("");
-  const [inviteEmail, setInviteEmail] = useState("");
 
   useEffect(() => {
     if (!selectedContactId && contacts.contacts[0]) {
@@ -30,15 +29,6 @@ export function ProfileScreen() {
     () => contacts.contacts.find((contact) => contact.id === selectedContactId) ?? contacts.contacts[0] ?? null,
     [contacts.contacts, selectedContactId],
   );
-
-  const inviteHref = useMemo(() => {
-    const email = inviteEmail.trim();
-    if (!email) return "";
-
-    const subject = encodeURIComponent("Join me on LetsCall");
-    const body = encodeURIComponent("IÃ¯Â¿Â½d love to save our calls and memories in LetsCall. Tap the link and sign in when youÃ¯Â¿Â½re ready.");
-    return `mailto:${email}?subject=${subject}&body=${body}`;
-  }, [inviteEmail]);
 
   async function handleConnect() {
     if (typeof window === "undefined") {
@@ -126,7 +116,7 @@ export function ProfileScreen() {
     : "No active LetsCall session";
 
   return (
-    <AppShell activeTab="profile" title="People" subtitle="Saved people, call shortcuts, and invites by email.">
+    <AppShell activeTab="profile" title="People" subtitle="Saved people, call shortcuts, and connected providers.">
       <div className="space-y-4">
         <section>
           <SectionHeader eyebrow="Saved people" title="Saved people" />
@@ -202,38 +192,6 @@ export function ProfileScreen() {
             </button>
           </GlassCard>
         ) : null}
-
-        <section>
-          <SectionHeader eyebrow="Add someone by email" title="Add someone by email" />
-          <GlassCard className="space-y-4 p-4">
-            <div>
-              <label className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/36" htmlFor="invite-email">
-                Email address
-              </label>
-              <input
-                id="invite-email"
-                type="email"
-                value={inviteEmail}
-                onChange={(event) => setInviteEmail(event.target.value)}
-                placeholder="name@example.com"
-                className="mt-2 h-14 w-full rounded-[20px] border border-white/10 bg-white/6 px-4 text-[15px] text-white outline-none placeholder:text-white/30 focus:border-white/20"
-              />
-            </div>
-            <a
-              href={inviteHref || undefined}
-              aria-disabled={!inviteHref}
-              className={`flex min-h-[54px] items-center justify-center rounded-[20px] px-5 text-[15px] font-semibold transition active:scale-[0.98] ${inviteHref ? "bg-[linear-gradient(180deg,#ff8f7d_0%,#ef5b48_100%)] text-white shadow-[0_18px_42px_rgba(239,91,72,0.28)]" : "cursor-not-allowed border border-white/10 bg-white/5 text-white/42"}`}
-              onClick={(event) => {
-                if (!inviteHref) {
-                  event.preventDefault();
-                }
-              }}
-            >
-              Send Invite
-            </a>
-            <p className="text-[12px] leading-5 text-white/52">We&apos;ll add address-book sync later. For now, this opens a ready-to-send email invite.</p>
-          </GlassCard>
-        </section>
 
         <section>
           <SectionHeader eyebrow="Provider" title="Google connection" />
@@ -319,4 +277,3 @@ export function ProfileScreen() {
     </AppShell>
   );
 }
-

@@ -1,6 +1,4 @@
-"use client";
-
-import { authFetch } from "@/lib/auth-client";
+﻿import { authFetch } from "@/lib/auth-client";
 
 export type ContactSummary = {
   id: string;
@@ -12,6 +10,26 @@ export type ContactSummary = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type MemoryInviteStatus = "pending" | "accepted" | "expired" | "revoked";
+
+export type MemoryInviteSummary = {
+  id: string;
+  token: string;
+  shareUrl: string;
+  inviterProfileId: string;
+  inviterDisplayName: string;
+  inviterPhotoUrl: string | null;
+  recipientEmail: string;
+  recipientDisplayName: string;
+  status: MemoryInviteStatus;
+  expiresAt: string;
+  createdAt: string;
+};
+
+export type ContactCreationResult =
+  | { status: "contact_added"; contact: ContactSummary }
+  | { status: "invite_created"; invite: MemoryInviteSummary };
 
 export type IncomingCallInvitation = {
   id: string;
@@ -31,6 +49,15 @@ export type ContactsResponse = {
   contacts: ContactSummary[];
 };
 
+async function parseJsonError(response: Response) {
+  const body = (await response.json().catch(() => null)) as { error?: string; code?: string } | null;
+  const message = body?.error ?? "Request failed";
+  const error = new Error(message);
+  (error as Error & { code?: string }).code = body?.code ?? "request_failed";
+  (error as Error & { status?: number }).status = response.status;
+  throw error;
+}
+
 export async function fetchContacts() {
   return authFetch<ContactsResponse>("/api/contacts", {
     method: "GET",
@@ -38,8 +65,8 @@ export async function fetchContacts() {
   });
 }
 
-export async function createContact(input: { email: string; nickname?: string }) {
-  return authFetch<{ contact: ContactSummary }>("/api/contacts", {
+export async function createContact(input: { email: string; displayName: string }) {
+  return authFetch<ContactCreationResult>("/api/contacts", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -81,4 +108,26 @@ export async function cancelInvitationByCallId(callId: string) {
     method: "POST",
     cache: "no-store",
   });
+}
+
+export async function fetchMemoryInvite(token: string) {
+  const response = await fetch(`/api/invitations/${encodeURIComponent(token)}`, {
+    method: "GET",
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    await parseJsonError(response);
+  }
+
+  return (await response.json()) as { invite: MemoryInviteSummary };
+}
+
+export async function acceptMemoryInvite(token: string) {
+  const response = await authFetch<{ ok: true; invite: MemoryInviteSummary }>(`/api/invitations/${encodeURIComponent(token)}/accept`, {
+    method: "POST",
+    cache: "no-store",
+  });
+
+  return response;
 }

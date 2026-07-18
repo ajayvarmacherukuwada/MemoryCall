@@ -7,7 +7,7 @@ import { useMemoryArchive } from "@/lib/memory-archive/storage";
 import type { MemoryArchiveRecord } from "@/lib/memory-archive/types";
 import { useSessionProfile } from "@/components/letscall/use-session-profile";
 import { formatContactDisplayName, useContacts } from "@/components/letscall/use-contacts";
-import type { ContactSummary } from "@/lib/contacts-client";
+import type { ContactCreationResult, ContactSummary, MemoryInviteSummary } from "@/lib/contacts-client";
 
 function formatDateLabel(value: string) {
   return new Intl.DateTimeFormat("en-US", {
@@ -102,26 +102,30 @@ function CompactMemoryCard({ archive }: { archive: MemoryArchiveRecord }) {
 
 function AddContactSheet({
   open,
+  inviterName,
   onClose,
   onSave,
 }: {
   open: boolean;
+  inviterName: string;
   onClose: () => void;
-  onSave: (contact: { email: string; nickname: string }) => Promise<void>;
+  onSave: (contact: { email: string; displayName: string }) => Promise<ContactCreationResult>;
 }) {
   const [email, setEmail] = useState("");
-  const [nickname, setNickname] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [feedback, setFeedback] = useState<{ tone: "neutral" | "success" | "error"; message: string } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [invite, setInvite] = useState<MemoryInviteSummary | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const dragState = useRef({ startY: 0, currentY: 0, dragging: false });
 
   useEffect(() => {
     if (!open) {
       setEmail("");
-      setNickname("");
+      setDisplayName("");
       setFeedback(null);
       setSaving(false);
+      setInvite(null);
     }
   }, [open]);
 
@@ -162,30 +166,69 @@ function AddContactSheet({
     }
   };
 
+  const emailValue = email.trim().toLowerCase();
+  const displayNameValue = displayName.trim();
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const canContinue = !saving && !invite && Boolean(emailValue && emailPattern.test(emailValue) && displayNameValue);
+
   const handleSave = async () => {
-    const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail) {
+    if (!emailValue || !emailPattern.test(emailValue)) {
       setFeedback({ tone: "error", message: "Please enter a valid email address." });
       return;
     }
 
-    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailPattern.test(normalizedEmail)) {
-      setFeedback({ tone: "error", message: "Please enter a valid email address." });
+    if (!displayNameValue) {
+      setFeedback({ tone: "error", message: "Please enter a display name." });
       return;
     }
 
     setSaving(true);
-    setFeedback(null);
+    setFeedback({ tone: "neutral", message: "Checking MemoryCall account..." });
 
     try {
-      await onSave({ email: normalizedEmail, nickname: nickname.trim() });
-      setFeedback({ tone: "success", message: "Contact added successfully." });
-      window.setTimeout(() => onClose(), 650);
+      const result = await onSave({ email: emailValue, displayName: displayNameValue });
+      if (result.status === "contact_added") {
+        setInvite(null);
+        setFeedback({ tone: "success", message: "Contact added successfully." });
+        window.setTimeout(() => onClose(), 650);
+      } else {
+        setInvite(result.invite);
+        setFeedback({ tone: "neutral", message: "This person isn't on MemoryCall yet." });
+      }
     } catch (error) {
       setFeedback({ tone: "error", message: error instanceof Error ? error.message : "Unable to add this contact." });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleShareInvite = async () => {
+    if (!invite || typeof window === "undefined") return;
+
+    const shareTitle = `Join me on MemoryCall`;
+    const shareText = `${inviterName} invited you to join MemoryCall.`;
+
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: shareTitle,
+          text: shareText,
+          url: invite.shareUrl,
+        });
+      } else {
+        await navigator.clipboard.writeText(invite.shareUrl);
+        setFeedback({ tone: "success", message: "Invite link copied to clipboard." });
+      }
+    } catch {
+      setFeedback({ tone: "error", message: "Unable to share the invite link." });
+    }
+  };
+
+  const handleInputChange = (setter: (value: string) => void) => (value: string) => {
+    setter(value);
+    if (invite) {
+      setInvite(null);
+      setFeedback(null);
     }
   };
 
@@ -249,34 +292,54 @@ function AddContactSheet({
               id="contact-email"
               type="email"
               value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={(event) => handleInputChange(setEmail)(event.target.value)}
               placeholder="name@example.com"
               className="mt-2 h-14 w-full rounded-[20px] border border-white/10 bg-white/6 px-4 text-[15px] text-white outline-none placeholder:text-white/30 focus:border-white/20"
             />
           </div>
 
           <div>
-            <label htmlFor="contact-nickname" className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/36">
-              Nickname (optional)
+            <label htmlFor="contact-display-name" className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/36">
+              Display Name
             </label>
             <input
-              id="contact-nickname"
+              id="contact-display-name"
               type="text"
-              value={nickname}
-              onChange={(event) => setNickname(event.target.value)}
+              value={displayName}
+              onChange={(event) => handleInputChange(setDisplayName)(event.target.value)}
               placeholder="Mom"
               className="mt-2 h-14 w-full rounded-[20px] border border-white/10 bg-white/6 px-4 text-[15px] text-white outline-none placeholder:text-white/30 focus:border-white/20"
             />
           </div>
 
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving}
-            className="flex min-h-[54px] w-full items-center justify-center rounded-[20px] bg-[linear-gradient(180deg,#93f4d5_0%,#65c9ad_100%)] px-5 text-[15px] font-semibold text-[#07110f] transition active:scale-[0.98] disabled:opacity-60"
-          >
-            {saving ? "Saving..." : "Continue"}
-          </button>
+          {!invite ? (
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={!canContinue}
+              className="flex min-h-[54px] w-full items-center justify-center rounded-[20px] bg-[linear-gradient(180deg,#93f4d5_0%,#65c9ad_100%)] px-5 text-[15px] font-semibold text-[#07110f] transition active:scale-[0.98] disabled:opacity-60"
+            >
+              {saving ? "Checking MemoryCall account..." : "Continue"}
+            </button>
+          ) : (
+            <div className="space-y-3">
+              <p className="px-2 text-center text-[13px] leading-6 text-white/72">This person isn&apos;t on MemoryCall yet.</p>
+              <button
+                type="button"
+                onClick={handleShareInvite}
+                className="flex min-h-[54px] w-full items-center justify-center rounded-[20px] bg-[linear-gradient(180deg,#93f4d5_0%,#65c9ad_100%)] px-5 text-[15px] font-semibold text-[#07110f] transition active:scale-[0.98]"
+              >
+                Share Invite
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex min-h-[54px] w-full items-center justify-center rounded-[20px] border border-white/10 bg-white/6 px-5 text-[15px] font-semibold text-white transition active:scale-[0.98]"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
 
           {feedback ? (
             <p className={`pb-1 text-center text-[12px] leading-5 ${feedback.tone === "success" ? "text-emerald-200" : feedback.tone === "error" ? "text-rose-200" : "text-white/42"}`}>
@@ -300,11 +363,6 @@ export function HomeScreen() {
   const welcomeName = useMemo(() => profile.name.split(" ")[0] || "there", [profile.name]);
 
   const firstName = profile.loading ? "" : welcomeName;
-
-  const addContact = async (contact: { email: string; nickname: string }) => {
-    await contacts.addContact(contact);
-    await contacts.refreshContacts();
-  };
 
   return (
     <AppShell activeTab="home" title={`Good Morning, ${firstName || "User"}`} subtitle="Your private conversations, always within reach.">
@@ -345,7 +403,7 @@ export function HomeScreen() {
                   <div className="min-w-0">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/36">Latest call</p>
                     <h3 className="mt-2 text-[18px] font-semibold tracking-[-0.02em] text-white">{latestArchive.title}</h3>
-                    <p className="mt-1 text-[13px] text-white/52">{latestArchive.collection} � {formatDateLabel(latestArchive.createdAt)}</p>
+                    <p className="mt-1 text-[13px] text-white/52">{latestArchive.collection} · {formatDateLabel(latestArchive.createdAt)}</p>
                   </div>
                   <Badge>{formatDuration(latestArchive.duration)}</Badge>
                 </div>
@@ -371,10 +429,10 @@ export function HomeScreen() {
 
       <AddContactSheet
         open={addSheetOpen}
+        inviterName={profile.name || "Someone"}
         onClose={() => setAddSheetOpen(false)}
-        onSave={addContact}
+        onSave={contacts.addContact}
       />
     </AppShell>
   );
 }
-

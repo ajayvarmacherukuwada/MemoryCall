@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { authenticateSupabaseRequest } from "@/lib/server/supabase-admin";
 import { addContactForProfile, listContactsForProfile } from "@/lib/server/contacts";
+import { createInviteForProfile } from "@/lib/server/invitations";
 import { ensureProfileRow } from "@/lib/server/profile";
 
 export const runtime = "nodejs";
@@ -59,9 +60,9 @@ export async function POST(request: Request) {
     const { user } = await authenticateSupabaseRequest(request);
     await ensureProfileRow(user);
 
-    const body = (await request.json().catch(() => null)) as { email?: string; nickname?: string | null } | null;
+    const body = (await request.json().catch(() => null)) as { email?: string; displayName?: string; nickname?: string | null } | null;
     const email = body?.email?.trim() ?? "";
-    const nickname = body?.nickname?.trim() ?? null;
+    const displayName = body?.displayName?.trim() ?? body?.nickname?.trim() ?? "";
 
     if (!email) {
       return NextResponse.json({ error: "Please enter a valid email address.", code: "invalid_email" }, { status: 400 });
@@ -72,8 +73,26 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Please enter a valid email address.", code: "invalid_email" }, { status: 400 });
     }
 
-    const contact = await addContactForProfile(user.id, email, nickname);
-    return NextResponse.json({ contact });
+    if (!displayName) {
+      return NextResponse.json({ error: "Please enter a display name.", code: "invalid_display_name" }, { status: 400 });
+    }
+
+    try {
+      const contact = await addContactForProfile(user.id, email, displayName);
+      return NextResponse.json({ status: "contact_added", contact });
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && String((error as { code?: string }).code ?? "") === "contact_not_found") {
+        const invite = await createInviteForProfile({
+          inviterProfileId: user.id,
+          recipientEmail: email,
+          recipientDisplayName: displayName,
+        });
+
+        return NextResponse.json({ status: "invite_created", invite });
+      }
+
+      throw error;
+    }
   } catch (error) {
     const status = getErrorStatus(error);
     const code = getErrorCode(error);

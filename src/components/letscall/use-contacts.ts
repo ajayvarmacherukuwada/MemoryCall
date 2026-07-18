@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { createContact, fetchContacts, type ContactSummary } from "@/lib/contacts-client";
+import { createContact, fetchContacts, type ContactCreationResult, type ContactSummary } from "@/lib/contacts-client";
 
 export function formatContactDisplayName(contact: Pick<ContactSummary, "displayName" | "nickname" | "email">) {
   const nickname = contact.nickname?.trim();
@@ -68,10 +68,13 @@ export function useContacts(enabled: boolean) {
     };
   }, [loadContacts]);
 
-  const addNewContact = async (input: { email: string; nickname?: string }) => {
+  const addNewContact = async (input: { email: string; displayName: string }): Promise<ContactCreationResult> => {
     const response = await createContact(input);
-    setContacts((current) => [response.contact, ...current.filter((contact) => contact.id !== response.contact.id)]);
-    return response.contact;
+    if (response.status === "contact_added") {
+      setContacts((current) => [response.contact, ...current.filter((contact) => contact.id !== response.contact.id)]);
+    }
+
+    return response;
   };
 
   return {

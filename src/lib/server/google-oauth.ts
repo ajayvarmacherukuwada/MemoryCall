@@ -1,4 +1,4 @@
-import crypto from "node:crypto";
+﻿import crypto from "node:crypto";
 import { getGoogleOAuthEnv } from "@/lib/env";
 
 const GOOGLE_AUTH_BASE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -303,3 +303,4 @@ export function createOAuthCookieOptions(request: Request) {
     path: "/",
   };
 }
+

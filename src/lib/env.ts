@@ -1,4 +1,4 @@
-function requireEnv(name: string) {
+﻿function requireEnv(name: string) {
   const value = process.env[name];
   if (!value) {
     throw new Error(`Missing required environment variable: ${name}`);
@@ -21,6 +21,22 @@ export function getGoogleOAuthEnv() {
     googleOAuthClientSecret: requireEnv("GOOGLE_OAUTH_CLIENT_SECRET"),
     googleOAuthStateSecret: requireEnv("GOOGLE_OAUTH_STATE_SECRET"),
     googleTokenEncryptionKey: requireEnv("GOOGLE_TOKEN_ENCRYPTION_KEY"),
+  };
+}
+
+export function getInviteEnv() {
+  const configuredBaseUrl = process.env.APP_BASE_URL?.trim() || process.env.NEXT_PUBLIC_APP_BASE_URL?.trim();
+  if (!configuredBaseUrl) {
+    throw new Error("Missing required environment variable: APP_BASE_URL");
+  }
+
+  const expiryHoursRaw = process.env.INVITE_EXPIRY_HOURS?.trim();
+  const parsedExpiryHours = expiryHoursRaw ? Number(expiryHoursRaw) : 72;
+  const inviteExpiryHours = Number.isFinite(parsedExpiryHours) && parsedExpiryHours > 0 ? parsedExpiryHours : 72;
+
+  return {
+    appBaseUrl: configuredBaseUrl.replace(/\/$/, ""),
+    inviteExpiryHours,
   };
 }
 
