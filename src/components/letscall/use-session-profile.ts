@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getBrowserSupabaseClient, restoreBrowserSessionFromUrlHash } from "@/lib/supabase-browser";
-import { completeGoogleProviderConnection, fetchProviderSession, type ProviderSessionSnapshot } from "@/lib/provider-session";
+import { fetchProviderSession, type ProviderSessionSnapshot } from "@/lib/provider-session";
 import { touchSessionPresence } from "@/lib/auth-client";
 
 type SessionProfile = ProviderSessionSnapshot & {
@@ -173,17 +173,6 @@ export function useSessionProfile(): SessionProfileWithActions {
     window.addEventListener("letscall-auth-reset", handleAuthReset);
 
     void restoreBrowserSessionFromUrlHash()
-      .then(async (restoreResult) => {
-        if (!restoreResult?.googleProviderTokens) {
-          return;
-        }
-
-        try {
-          await completeGoogleProviderConnection(restoreResult.googleProviderTokens);
-        } catch {
-          // Keep the base Supabase session available even if provider completion needs follow-up.
-        }
-      })
       .catch(() => {
         // Ignore URL-hash restoration failures and continue with normal session loading.
       })
