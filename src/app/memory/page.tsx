@@ -1,6 +1,5 @@
-﻿import { MemoryScreen } from "@/components/letscall/memory-screen";
+import { redirect } from "next/navigation";
 
 export default function Page() {
-  return <MemoryScreen />;
+  redirect("/");
 }
-

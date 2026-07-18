@@ -31,17 +31,6 @@ const tabs: Array<{
     ),
   },
   {
-    id: "memory",
-    href: "/memory",
-    label: "+",
-    icon: (
-      <>
-        <path d="M12 5v14" strokeLinecap="round" />
-        <path d="M5 12h14" strokeLinecap="round" />
-      </>
-    ),
-  },
-  {
     id: "search",
     href: "/search",
     label: "Search",
@@ -368,5 +357,6 @@ export function SearchPill({ children }: { children: ReactNode }) {
     </button>
   );
 }
+
 
 
