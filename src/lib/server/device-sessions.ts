@@ -1,4 +1,4 @@
-import { getSupabaseAdminClient } from "@/lib/server/supabase-admin";
+﻿import { getSupabaseAdminClient } from "@/lib/server/supabase-admin";
 
 const ACTIVE_SESSION_WINDOW_MS = 90 * 1000;
 
@@ -9,6 +9,10 @@ export type DeviceSessionMetadata = {
   platformVersion: string | null;
   appVersion: string | null;
 };
+
+function logDeviceSessionEvent(step: string, details: Record<string, unknown>) {
+  console.info("[LetsCall][DeviceSession]", JSON.stringify({ step, at: new Date().toISOString(), ...details }));
+}
 
 export function readDeviceSessionMetadata(request: Request) {
   const headers = request.headers;
@@ -51,13 +55,111 @@ function buildDeviceSessionPayload(profileId: string, metadata: DeviceSessionMet
 export async function touchDeviceSession(profileId: string, metadata: DeviceSessionMetadata) {
   const supabase = getSupabaseAdminClient();
   const payload = buildDeviceSessionPayload(profileId, metadata);
-  const { error } = await supabase
-    .from("device_sessions")
-    .upsert(payload, { onConflict: "profile_id,device_identifier" });
 
-  if (error) {
-    throw error;
+  logDeviceSessionEvent("touch_start", {
+    profileId,
+    deviceId: metadata.deviceId,
+  });
+
+  const { data: existing, error: selectError } = await supabase
+    .from("device_sessions")
+    .select("id,deleted_at")
+    .eq("profile_id", profileId)
+    .eq("device_identifier", metadata.deviceId)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (selectError) {
+    logDeviceSessionEvent("touch_select_failed", {
+      profileId,
+      deviceId: metadata.deviceId,
+      message: selectError.message,
+      code: selectError.code ?? null,
+    });
+    throw selectError;
   }
+
+  if (existing?.id) {
+    const { error: updateError } = await supabase.from("device_sessions").update(payload).eq("id", existing.id);
+    if (updateError) {
+      logDeviceSessionEvent("touch_update_failed", {
+        profileId,
+        deviceId: metadata.deviceId,
+        message: updateError.message,
+        code: updateError.code ?? null,
+      });
+      throw updateError;
+    }
+
+    logDeviceSessionEvent("touch_update_complete", {
+      profileId,
+      deviceId: metadata.deviceId,
+      deviceSessionId: existing.id,
+    });
+    return;
+  }
+
+  const { data: inserted, error: insertError } = await supabase
+    .from("device_sessions")
+    .insert(payload)
+    .select("id")
+    .single();
+
+  if (insertError) {
+    if (insertError.code === "23505") {
+      const { data: conflicted, error: retrySelectError } = await supabase
+        .from("device_sessions")
+        .select("id")
+        .eq("profile_id", profileId)
+        .eq("device_identifier", metadata.deviceId)
+        .is("deleted_at", null)
+        .maybeSingle();
+
+      if (retrySelectError) {
+        logDeviceSessionEvent("touch_retry_select_failed", {
+          profileId,
+          deviceId: metadata.deviceId,
+          message: retrySelectError.message,
+          code: retrySelectError.code ?? null,
+        });
+        throw retrySelectError;
+      }
+
+      if (conflicted?.id) {
+        const { error: retryUpdateError } = await supabase.from("device_sessions").update(payload).eq("id", conflicted.id);
+        if (retryUpdateError) {
+          logDeviceSessionEvent("touch_retry_update_failed", {
+            profileId,
+            deviceId: metadata.deviceId,
+            message: retryUpdateError.message,
+            code: retryUpdateError.code ?? null,
+          });
+          throw retryUpdateError;
+        }
+
+        logDeviceSessionEvent("touch_retry_update_complete", {
+          profileId,
+          deviceId: metadata.deviceId,
+          deviceSessionId: conflicted.id,
+        });
+        return;
+      }
+    }
+
+    logDeviceSessionEvent("touch_insert_failed", {
+      profileId,
+      deviceId: metadata.deviceId,
+      message: insertError.message,
+      code: insertError.code ?? null,
+    });
+    throw insertError;
+  }
+
+  logDeviceSessionEvent("touch_insert_complete", {
+    profileId,
+    deviceId: metadata.deviceId,
+    deviceSessionId: inserted.id,
+  });
 }
 
 export async function signOutDeviceSession(profileId: string, deviceId: string | null) {
