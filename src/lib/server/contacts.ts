@@ -332,6 +332,10 @@ export async function listIncomingCallInvitations(profileId: string) {
   }
 
   const callerIds = (invitations ?? []).map((item) => item.caller_profile_id);
+  if (callerIds.length === 0) {
+    return [];
+  }
+
   const { data: callerProfiles, error: callerError } = await supabase
     .from("profiles")
     .select("id, email, display_name, photo_url")

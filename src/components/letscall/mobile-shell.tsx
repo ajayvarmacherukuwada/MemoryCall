@@ -101,14 +101,32 @@ export function AppShell({
         if (!cancelled && response.invitation) {
           router.replace(`/incoming/${encodeURIComponent(response.invitation.id)}`);
         }
-      } catch {
-        // No active session or no incoming invitation yet.
+        return true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        const status = error && typeof error === "object" && "status" in error ? (error as { status?: number }).status : undefined;
+        if (status === 401 || message.includes("Missing Supabase session")) {
+          return false;
+        }
+
+        // Keep polling for transient errors or when no invitation exists.
+        return true;
       }
     };
 
-    void checkIncomingInvitation();
+    void checkIncomingInvitation().then((shouldContinue) => {
+      if (shouldContinue === false && intervalId !== null) {
+        window.clearInterval(intervalId);
+        intervalId = null;
+      }
+    });
     intervalId = window.setInterval(() => {
-      void checkIncomingInvitation();
+      void checkIncomingInvitation().then((shouldContinue) => {
+        if (shouldContinue === false && intervalId !== null) {
+          window.clearInterval(intervalId);
+          intervalId = null;
+        }
+      });
     }, 5000);
 
     return () => {
