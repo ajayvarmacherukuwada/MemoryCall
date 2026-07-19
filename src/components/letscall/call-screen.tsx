@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { AppShell, Avatar, GlassCard } from "@/components/letscall/mobile-shell";
 import { useSessionProfile } from "@/components/letscall/use-session-profile";
 import { CallService } from "@/lib/calls/call-service";
+import { buildRecordingFile, clearRecordingSession, getPendingRecordingPointer } from "@/lib/calls/recording-store";
 import { MemoryArchiveService } from "@/lib/memory-archive/memory-archive-service";
 import type { CallCompletion, CallSnapshot } from "@/lib/calls/types";
 import type { MemoryArchiveRecord } from "@/lib/memory-archive/types";
@@ -162,6 +163,57 @@ function CallProgressCard({
           {retryLabel}
         </button>
       ) : null}
+    </GlassCard>
+  );
+}
+
+
+function CallCompletionCard({
+  completion,
+  statusMessage,
+  busy,
+  onSave,
+  onDiscard,
+}: {
+  completion: CallCompletion;
+  statusMessage: string;
+  busy: boolean;
+  onSave: () => void;
+  onDiscard: () => void;
+}) {
+  return (
+    <GlassCard className="p-5">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/38">Call completed</p>
+      <h2 className="mt-4 text-[30px] font-semibold leading-[0.98] tracking-[-0.05em] text-white">{statusMessage}</h2>
+      <p className="mt-3 text-[15px] leading-6 text-white/62">Duration {formatDuration(completion.durationSeconds)}. Choose what to do with this recording.</p>
+      <div className="mt-5 grid grid-cols-2 gap-3">
+        <div className="rounded-[22px] bg-white/6 p-4">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/36">Recording</p>
+          <p className="mt-2 text-[18px] font-semibold text-white">{formatDuration(completion.durationSeconds)}</p>
+        </div>
+        <div className="rounded-[22px] bg-white/6 p-4">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/36">Size</p>
+          <p className="mt-2 text-[18px] font-semibold text-white">{Math.max(1, Math.round(completion.totalBytes / 1024))} KB</p>
+        </div>
+      </div>
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={busy}
+          className="flex min-h-[52px] items-center justify-center rounded-[20px] bg-[linear-gradient(180deg,#93f4d5_0%,#65c9ad_100%)] px-5 text-[15px] font-semibold text-[#07110f] transition active:scale-[0.98] disabled:opacity-60"
+        >
+          Save recording
+        </button>
+        <button
+          type="button"
+          onClick={onDiscard}
+          disabled={busy}
+          className="flex min-h-[52px] items-center justify-center rounded-[20px] border border-white/10 bg-white/6 px-5 text-[15px] font-semibold text-white transition active:scale-[0.98] disabled:opacity-60"
+        >
+          Discard recording
+        </button>
+      </div>
     </GlassCard>
   );
 }
@@ -424,6 +476,8 @@ export function CallScreen() {
   const [joinCode, setJoinCode] = useState(searchParams.get("join") ?? "");
   const [busy, setBusy] = useState(false);
   const [savedMemory, setSavedMemory] = useState<MemoryArchiveRecord | null>(null);
+  const [postCallCompletion, setPostCallCompletion] = useState<CallCompletion | null>(null);
+  const [decisionBusy, setDecisionBusy] = useState(false);
   const [archiveSetupRequired, setArchiveSetupRequired] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const [archiveProgress, setArchiveProgress] = useState(0);
@@ -452,6 +506,8 @@ export function CallScreen() {
     archiveStartedRef.current = false;
     completionRef.current = null;
     setSavedMemory(null);
+    setPostCallCompletion(null);
+    setDecisionBusy(false);
     setArchiveError(null);
     setArchiveSetupRequired(false);
     setArchiveProgress(0);
@@ -517,6 +573,7 @@ export function CallScreen() {
   useEffect(() => {
     if (!savedMemory) return;
     const timeout = window.setTimeout(() => {
+      CallService.dispose();
       router.replace("/");
     }, 1200);
     return () => window.clearTimeout(timeout);
@@ -527,13 +584,75 @@ export function CallScreen() {
       return;
     }
 
-    if (snapshot.lifecycle === "ended" || snapshot.lifecycle === "declined") {
-      const timeout = window.setTimeout(() => {
-        router.replace("/");
-      }, 250);
-      return () => window.clearTimeout(timeout);
+    if (snapshot.lifecycle !== "ended" && snapshot.lifecycle !== "declined") {
+      return;
     }
-  }, [archiveSetupRequired, busy, router, savedMemory, snapshot.lifecycle]);
+
+    if (postCallCompletion?.recording) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const recoverCompletion = async () => {
+      const liveCompletion = completionRef.current ?? CallService.getCompletion();
+      if (liveCompletion?.recording) {
+        if (!cancelled) {
+          setPostCallCompletion(liveCompletion);
+        }
+        return;
+      }
+
+      const callId = snapshot.callId ?? routeCallId;
+      if (!callId) {
+        if (!cancelled) {
+          CallService.dispose();
+          router.replace("/");
+        }
+        return;
+      }
+
+      const pointer = getPendingRecordingPointer(callId);
+      if (!pointer?.sessionId) {
+        if (!cancelled) {
+          CallService.dispose();
+          router.replace("/");
+        }
+        return;
+      }
+
+      const recovered = await buildRecordingFile(pointer.sessionId);
+      if (cancelled) {
+        return;
+      }
+
+      if (!recovered?.file) {
+        CallService.dispose();
+        router.replace("/");
+        return;
+      }
+
+      const completion: CallCompletion = {
+        recording: recovered.file,
+        durationSeconds: recovered.session.durationSeconds ?? 1,
+        title: recovered.session.title,
+        description: recovered.session.description,
+        recordingSessionId: recovered.session.sessionId,
+        chunkCount: recovered.session.chunkCount,
+        totalBytes: recovered.session.totalBytes,
+        mimeType: recovered.session.mimeType,
+      };
+
+      completionRef.current = completion;
+      setPostCallCompletion(completion);
+    };
+
+    void recoverCompletion();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [archiveSetupRequired, busy, postCallCompletion, routeCallId, router, savedMemory, snapshot.callId, snapshot.lifecycle]);
 
   const isArchiving = snapshot.lifecycle === "archiving";
   const isFailed = snapshot.lifecycle === "failed";
@@ -546,7 +665,7 @@ export function CallScreen() {
         : status
       : status;
 
-  async function archiveCompletion(completion: CallCompletion) {
+  async function archiveCompletion(completion: CallCompletion): Promise<MemoryArchiveRecord | null> {
     logLifecycleEvent("ARCHIVE_STARTED", {
       title: completion.title,
       durationSeconds: completion.durationSeconds,
@@ -593,17 +712,19 @@ export function CallScreen() {
         setArchiveSetupRequired(true);
         setArchiveMessage("Archive setup required. Create a free YouTube channel to enable automatic memory archiving.");
         CallService.markFailed("Archive setup required. Create a free YouTube channel to enable automatic memory archiving.");
-        return;
+        return null;
       }
 
       setSavedMemory(archive);
       CallService.markSuccess(archive.archiveId, "Memory saved to your library.");
       logCallUiEvent("archive_success", { archiveId: archive.archiveId });
+      return archive;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to archive the call.";
       setArchiveError(message);
       CallService.markFailed(message);
       logCallUiEvent("archive_failed", { error: message });
+      return null;
     }
   }
 
@@ -681,18 +802,13 @@ export function CallScreen() {
         setArchiveError(null);
         setArchiveSetupRequired(false);
         setArchiveMessage("Call ended.");
+        CallService.dispose();
         router.replace("/");
         return;
       }
 
-      const shouldArchive = window.confirm("Recording available. Do you want to archive this memory?");
-      if (!shouldArchive) {
-        router.replace("/");
-        return;
-      }
-
-      setArchiveMessage("Finalizing recording...");
-      await archiveCompletion(completion);
+      setPostCallCompletion(completion);
+      setArchiveMessage("Call completed.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to end the call.";
       setArchiveError(message);
@@ -716,6 +832,34 @@ export function CallScreen() {
     await archiveCompletion(completion);
   };
 
+  const handleSaveRecording = async () => {
+    const completion = postCallCompletion ?? completionRef.current ?? CallService.getCompletion();
+    if (!completion?.recording) {
+      return;
+    }
+
+    setDecisionBusy(true);
+    try {
+      const archive = await archiveCompletion(completion);
+      if (archive) {
+        await clearRecordingSession(completion.recordingSessionId);
+      }
+    } finally {
+      setDecisionBusy(false);
+    }
+  };
+
+  const handleDiscardRecording = async () => {
+    const completion = postCallCompletion ?? completionRef.current ?? CallService.getCompletion();
+    if (completion?.recording) {
+      await clearRecordingSession(completion.recordingSessionId);
+    }
+    completionRef.current = null;
+    setPostCallCompletion(null);
+    CallService.dispose();
+    router.replace("/");
+  };
+
   const participantLabel = contactDisplayName || "Private Call";
   const noticeMessage =
     snapshot.lifecycle === "reconnecting"
@@ -723,6 +867,15 @@ export function CallScreen() {
       : archiveError && snapshot.lifecycle !== "archiving"
         ? archiveError
         : null;
+
+  const pendingCompletion = postCallCompletion ?? completionRef.current ?? CallService.getCompletion();
+  const callEndedSummaryVisible =
+    Boolean(pendingCompletion?.recording) &&
+    (snapshot.lifecycle === "ended" || snapshot.lifecycle === "declined" || snapshot.lifecycle === "failed");
+  const completionStatusMessage =
+    snapshot.errorMessage?.toLowerCase().includes("interrupted") || snapshot.lifecycle === "reconnecting"
+      ? "Call disconnected."
+      : "Call completed.";
 
   const renderShell = (content: ReactNode) => (
     <AppShell
@@ -787,6 +940,26 @@ export function CallScreen() {
       <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(147,244,213,0.14),_transparent_28%),radial-gradient(circle_at_bottom,_rgba(92,132,255,0.16),_transparent_30%),linear-gradient(180deg,#081017_0%,#05070b_100%)]">
         <div className="mx-auto flex h-full w-full max-w-[560px] flex-col justify-center px-4 py-4 sm:px-5">
           <CallProgressCard title={title} message={archiveMessage} progress={progress} error={archiveError} />
+        </div>
+      </div>
+    );
+  }
+
+  if (callEndedSummaryVisible && pendingCompletion) {
+    return renderShell(
+      <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(147,244,213,0.14),_transparent_28%),radial-gradient(circle_at_bottom,_rgba(92,132,255,0.16),_transparent_30%),linear-gradient(180deg,#081017_0%,#05070b_100%)]">
+        <div className="mx-auto flex h-full w-full max-w-[560px] flex-col justify-center px-4 py-4 sm:px-5">
+          <CallCompletionCard
+            completion={pendingCompletion}
+            statusMessage={completionStatusMessage}
+            busy={decisionBusy}
+            onSave={() => {
+              void handleSaveRecording();
+            }}
+            onDiscard={() => {
+              void handleDiscardRecording();
+            }}
+          />
         </div>
       </div>
     );
