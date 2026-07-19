@@ -177,7 +177,7 @@ export async function upsertRecordingSession(session: Omit<RecordingDraftSession
     chunkCount: nextSession.chunkCount,
     totalBytes: nextSession.totalBytes,
   });
-  setPendingRecordingPointer(nextSession.callId, nextSession.sessionId);
+  setPendingRecordingPointer(nextSession.callId, nextSession.sessionId, nextSession.status);
 
   return nextSession;
 }
@@ -269,7 +269,7 @@ export async function finalizeRecordingSession(
     durationSeconds: nextSession.durationSeconds,
     fileName: nextSession.fileName,
   });
-  setPendingRecordingPointer(nextSession.callId, nextSession.sessionId);
+  setPendingRecordingPointer(nextSession.callId, nextSession.sessionId, nextSession.status);
 
   return nextSession;
 }
@@ -343,7 +343,7 @@ export async function clearRecordingSession(sessionId: string) {
   logRecordingStoreEvent("session_cleared", { sessionId });
 }
 
-export function setPendingRecordingPointer(callId: string | null, sessionId: string | null) {
+export function setPendingRecordingPointer(callId: string | null, sessionId: string | null, status: RecordingDraftStatus | null = null) {
   if (typeof window === "undefined") return;
 
   const key = `${PENDING_COMPLETION_PREFIX}${callId ?? "unknown"}`;
@@ -357,6 +357,7 @@ export function setPendingRecordingPointer(callId: string | null, sessionId: str
     JSON.stringify({
       callId,
       sessionId,
+      status,
       updatedAt: Date.now(),
     }),
   );
@@ -370,7 +371,7 @@ export function getPendingRecordingPointer(callId: string | null) {
   if (!raw) return null;
 
   try {
-    return JSON.parse(raw) as { callId: string | null; sessionId: string; updatedAt: number };
+    return JSON.parse(raw) as { callId: string | null; sessionId: string; status?: RecordingDraftStatus | null; updatedAt: number };
   } catch {
     return null;
   }

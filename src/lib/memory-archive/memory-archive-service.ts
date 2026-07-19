@@ -116,7 +116,7 @@ export const MemoryArchiveService = {
       currentUploadController = controller;
 
       const response = await withTimeout(controller.promise, 120000, "Timed out while uploading the memory archive.");
-      persistUploadResponse(response);
+      persistUploadResponse(response, input);
       callbacks.onProgress?.({ status: "processing", progress: 92, message: "Processing archive..." });
       callbacks.onProgress?.({ status: "archived", progress: 100, message: "Archive complete." });
       logArchiveEvent("archive_complete", {
@@ -149,8 +149,12 @@ export const MemoryArchiveService = {
   },
 };
 
-function persistUploadResponse(response: MemoryArchiveUploadResponse) {
-  upsertMemoryArchiveRecord(response.archive);
+function persistUploadResponse(response: MemoryArchiveUploadResponse, input: MemoryArchiveInput) {
+  upsertMemoryArchiveRecord({
+    ...response.archive,
+    callId: input.callId ?? null,
+    recordingSessionId: input.recordingSessionId ?? null,
+  });
   upsertArchiveProviderState(response.providerState);
 }
 

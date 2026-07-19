@@ -21,6 +21,8 @@ export type MemoryArchiveRecord = {
   status: MemoryArchiveStatus;
   progress: number;
   errorMessage?: string | null;
+  callId?: string | null;
+  recordingSessionId?: string | null;
 };
 
 export type MemoryArchiveDraft = {
@@ -32,6 +34,8 @@ export type MemoryArchiveDraft = {
 export type MemoryArchiveInput = MemoryArchiveDraft & {
   file: File;
   duration: number;
+  callId?: string | null;
+  recordingSessionId?: string | null;
 };
 
 export type MemoryArchiveProgress = {

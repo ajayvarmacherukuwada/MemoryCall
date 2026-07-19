@@ -484,6 +484,10 @@ export function CallScreen() {
   const [archiveMessage, setArchiveMessage] = useState("Preparing memory...");
   const [inviteCopyState, setInviteCopyState] = useState<"idle" | "copied">("idle");
   const archiveStartedRef = useRef(false);
+  const [pendingRecordingPointer, setPendingRecordingPointer] = useState(() => {
+    const currentCallId = typeof params?.callId === "string" ? params.callId : Array.isArray(params?.callId) ? params.callId[0] ?? null : null;
+    return typeof window !== "undefined" ? getPendingRecordingPointer(currentCallId) : null;
+  });
   const autoStartRequestedRef = useRef(false);
   const completionRef = useRef<CallCompletion | null>(null);
   const profile = useSessionProfile();
@@ -501,6 +505,10 @@ export function CallScreen() {
   useEffect(() => {
     return CallService.subscribe(() => setSnapshot(CallService.getSnapshot()));
   }, []);
+
+  useEffect(() => {
+    setPendingRecordingPointer(getPendingRecordingPointer(routeCallId ?? snapshot.callId));
+  }, [routeCallId, snapshot.callId]);
 
   useEffect(() => {
     archiveStartedRef.current = false;
@@ -555,6 +563,7 @@ export function CallScreen() {
     if (autoStartRequestedRef.current) return;
     if (!hasAutoCallIntent) return;
     if (busy || savedMemory || archiveSetupRequired || snapshot.lifecycle === "failed") return;
+    if (pendingRecordingPointer?.status === "finalized") return;
     if (snapshot.callId || snapshot.lifecycle !== "idle") return;
 
     autoStartRequestedRef.current = true;
@@ -578,6 +587,49 @@ export function CallScreen() {
     }, 1200);
     return () => window.clearTimeout(timeout);
   }, [router, savedMemory]);
+
+  useEffect(() => {
+    if (busy || savedMemory || archiveSetupRequired || snapshot.lifecycle === "failed") {
+      return;
+    }
+
+    if (pendingRecordingPointer?.status !== "finalized") {
+      return;
+    }
+
+    if (postCallCompletion?.recording) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const restoreCompletedRecording = async () => {
+      const recovered = await buildRecordingFile(pendingRecordingPointer.sessionId);
+      if (cancelled || !recovered?.file) {
+        return;
+      }
+
+      const completion: CallCompletion = {
+        recording: recovered.file,
+        durationSeconds: recovered.session.durationSeconds ?? 1,
+        title: recovered.session.title,
+        description: recovered.session.description,
+        recordingSessionId: recovered.session.sessionId,
+        chunkCount: recovered.session.chunkCount,
+        totalBytes: recovered.session.totalBytes,
+        mimeType: recovered.session.mimeType,
+      };
+
+      completionRef.current = completion;
+      setPostCallCompletion(completion);
+    };
+
+    void restoreCompletedRecording();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [busy, pendingRecordingPointer?.sessionId, pendingRecordingPointer?.status, postCallCompletion, savedMemory, archiveSetupRequired, snapshot.lifecycle]);
 
   useEffect(() => {
     if (busy || savedMemory || archiveSetupRequired || snapshot.lifecycle === "failed") {
@@ -690,6 +742,8 @@ export function CallScreen() {
           description: completion.description,
           collection: "Personal",
           duration: completion.durationSeconds,
+          callId: snapshot.callId,
+          recordingSessionId: completion.recordingSessionId,
         },
         {
           onProgress: (progress) => {
@@ -871,7 +925,7 @@ export function CallScreen() {
   const pendingCompletion = postCallCompletion ?? completionRef.current ?? CallService.getCompletion();
   const callEndedSummaryVisible =
     Boolean(pendingCompletion?.recording) &&
-    (snapshot.lifecycle === "ended" || snapshot.lifecycle === "declined" || snapshot.lifecycle === "failed");
+    (pendingRecordingPointer?.status === "finalized" || snapshot.lifecycle === "ended" || snapshot.lifecycle === "declined" || snapshot.lifecycle === "failed");
   const completionStatusMessage =
     snapshot.errorMessage?.toLowerCase().includes("interrupted") || snapshot.lifecycle === "reconnecting"
       ? "Call disconnected."
