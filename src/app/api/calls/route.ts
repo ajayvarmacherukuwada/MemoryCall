@@ -1,4 +1,4 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { createCallRoomRecord } from "@/lib/calls/call-store";
 import { authenticateSupabaseRequest, getSupabaseAdminClient } from "@/lib/server/supabase-admin";
 import { ensureProfileRow } from "@/lib/server/profile";
@@ -120,10 +120,37 @@ export async function POST(request: Request) {
       );
     }
 
+    logApiEvent("Call session creation started", {
+      callId,
+      requestOrigin,
+      creatorProfileId: user.id,
+      contactId: contactRow.id,
+      calleeProfileId: contactRow.contact_profile_id,
+      mode,
+    });
+
     await createCallRoomRecord(callId, {
       creatorProfileId: user.id,
       contactId: contactRow.id,
       calleeProfileId: contactRow.contact_profile_id,
+      mode,
+    });
+
+    logApiEvent("Call session creation completed", {
+      callId,
+      requestOrigin,
+      creatorProfileId: user.id,
+      contactId: contactRow.id,
+      calleeProfileId: contactRow.contact_profile_id,
+      mode,
+    });
+
+    logApiEvent("Call invitation creation started", {
+      callId,
+      requestOrigin,
+      callerProfileId: user.id,
+      calleeProfileId: contactRow.contact_profile_id,
+      contactId: contactRow.id,
       mode,
     });
 
@@ -145,7 +172,7 @@ export async function POST(request: Request) {
       contactName: contactRow.nickname ?? contactRow.contact_display_name,
       invitationId: invitation.id,
     });
-    logApiEvent("Call invitation created", {
+    logApiEvent("Call invitation creation completed", {
       callId,
       invitationId: invitation.id,
       calleeProfileId: contactRow.contact_profile_id,
@@ -170,6 +197,7 @@ export async function POST(request: Request) {
       code,
       status,
       requestOrigin: new URL(request.url).origin,
+      stack: error instanceof Error ? error.stack ?? null : null,
     });
 
     return NextResponse.json({ error: message, code }, { status });

@@ -5,6 +5,9 @@ function normalizeEmail(value: string) {
   return value.trim().toLowerCase();
 }
 
+function logCallInvitationEvent(step: string, details: Record<string, unknown>) {
+  console.info("[LetsCall][CallInvitation]", JSON.stringify({ step, at: new Date().toISOString(), ...details }));
+}
 function formatDisplayName(email: string, displayName: string | null, nickname: string | null) {
   const trimmedNickname = nickname?.trim();
   if (trimmedNickname) {
@@ -199,6 +202,16 @@ export async function createCallInvitation(input: {
     throw callerProfileError;
   }
 
+  logCallInvitationEvent("insert_start", {
+    table: "call_invitations",
+    operation: "insert",
+    callId: input.callId,
+    callerProfileId: input.callerProfileId,
+    calleeProfileId: input.calleeProfileId,
+    contactId: input.contactId,
+    mode: input.mode,
+  });
+
   const { data: invitation, error } = await supabase
     .from("call_invitations")
     .insert({
@@ -207,6 +220,7 @@ export async function createCallInvitation(input: {
       callee_profile_id: input.calleeProfileId,
       contact_id: input.contactId,
       mode: input.mode,
+      call_mode: input.mode,
       status: "pending",
       expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
     })
@@ -214,8 +228,30 @@ export async function createCallInvitation(input: {
     .single();
 
   if (error || !invitation) {
+    logCallInvitationEvent("insert_failed", {
+      table: "call_invitations",
+      operation: "insert",
+      callId: input.callId,
+      callerProfileId: input.callerProfileId,
+      calleeProfileId: input.calleeProfileId,
+      contactId: input.contactId,
+      mode: input.mode,
+      message: error?.message ?? "Unable to create the call invitation.",
+      code: error?.code ?? null,
+    });
     throw error ?? new Error("Unable to create the call invitation.");
   }
+
+  logCallInvitationEvent("insert_complete", {
+    table: "call_invitations",
+    operation: "insert",
+    callId: input.callId,
+    invitationId: invitation.id,
+    callerProfileId: input.callerProfileId,
+    calleeProfileId: input.calleeProfileId,
+    contactId: input.contactId,
+    mode: input.mode,
+  });
 
   return {
     id: invitation.id,
