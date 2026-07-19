@@ -172,12 +172,14 @@ export function ProfileScreen() {
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <a
                 href={`/call?contactId=${encodeURIComponent(selectedContact.id)}&name=${encodeURIComponent(selectedContact.displayName)}&mode=video`}
+                onClick={() => console.info("[CALL UI]", JSON.stringify({ step: "Video Call button clicked", at: new Date().toISOString(), contactId: selectedContact.id, contactName: selectedContact.displayName, mode: "video" }))}
                 className="flex min-h-[54px] items-center justify-center rounded-[20px] bg-[linear-gradient(180deg,#93f4d5_0%,#65c9ad_100%)] px-5 text-[15px] font-semibold text-[#07110f] transition active:scale-[0.98]"
               >
                 Video Call
               </a>
               <a
                 href={`/call?contactId=${encodeURIComponent(selectedContact.id)}&name=${encodeURIComponent(selectedContact.displayName)}&mode=audio`}
+                onClick={() => console.info("[CALL UI]", JSON.stringify({ step: "Audio Call button clicked", at: new Date().toISOString(), contactId: selectedContact.id, contactName: selectedContact.displayName, mode: "audio" }))}
                 className="flex min-h-[54px] items-center justify-center rounded-[20px] border border-white/10 bg-white/6 px-5 text-[15px] font-semibold text-white transition active:scale-[0.98]"
               >
                 Audio Call
