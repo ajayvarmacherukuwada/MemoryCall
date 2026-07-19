@@ -89,5 +89,7 @@ export type CallRoomInfo = {
   updatedAt: number;
   endedAt: number | null;
   messageCount: number;
+  creatorProfileId?: string | null;
+  calleeProfileId?: string | null;
 };
 

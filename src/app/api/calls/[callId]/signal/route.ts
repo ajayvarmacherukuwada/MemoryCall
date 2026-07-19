@@ -51,6 +51,8 @@ export async function GET(request: Request, context: { params: Promise<{ callId:
       messageCount: messages.length,
       roomEnded: info.endedAt !== null,
       invitationStatus: invitation?.status ?? null,
+      creatorProfileId: info.creatorProfileId ?? null,
+      calleeProfileId: info.calleeProfileId ?? null,
     });
 
     return NextResponse.json({
@@ -58,6 +60,8 @@ export async function GET(request: Request, context: { params: Promise<{ callId:
       roomEnded: info.endedAt !== null,
       invitationStatus: invitation?.status ?? null,
       invitationId: invitation?.id ?? null,
+      creatorProfileId: info.creatorProfileId ?? null,
+      calleeProfileId: info.calleeProfileId ?? null,
     });
   } catch (error) {
     return toErrorResponse(error, "Unable to read call signaling data.", "signal_poll_failed", request.url);
@@ -83,8 +87,9 @@ export async function POST(request: Request, context: { params: Promise<{ callId
       return NextResponse.json({ error: "Invalid signaling payload." }, { status: 400 });
     }
 
+    const signalId = crypto.randomUUID();
     const stored = await appendCallSignalMessage({
-      id: crypto.randomUUID(),
+      id: signalId,
       callId,
       senderId: payload.senderId,
       type: payload.type,
@@ -97,12 +102,15 @@ export async function POST(request: Request, context: { params: Promise<{ callId
       senderId: payload.senderId,
       type: payload.type,
       requestOrigin: new Date().toISOString(),
+      signalId,
       sequence: stored?.nextSequence ? stored.nextSequence - 1 : null,
+      creatorProfileId: room.creatorProfileId ?? null,
+      calleeProfileId: room.calleeProfileId ?? null,
     });
 
     const lifecycleLogMap = {
       join: "Participant joined room",
-      accept: "Call accepted",
+      accept: "ACCEPT_PERSISTED",
       decline: "Call declined",
       offer: "Offer created",
       answer: "Answer created",

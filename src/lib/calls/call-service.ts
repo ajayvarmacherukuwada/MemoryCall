@@ -53,6 +53,11 @@ const DEFAULT_STATE: CallState = {
 
 type TerminationReason = "local_end" | "remote_hangup" | "remote_end" | "room_ended" | "remote_declined";
 
+type DebugIdentity = {
+  localProfileId: string | null;
+  remoteProfileId: string | null;
+};
+
 function getClientId() {
   if (typeof window === "undefined") {
     return crypto.randomUUID();
@@ -187,6 +192,7 @@ class CallSessionController {
   private localPeerConnected = false;
   private remotePeerConnected = false;
   private connectedSignalSent = false;
+  private debugIdentity: DebugIdentity = { localProfileId: null, remoteProfileId: null };
 
   subscribe(listener: Listener) {
     this.listeners.add(listener);
@@ -201,6 +207,21 @@ class CallSessionController {
 
   getCompletion() {
     return this.currentCompletion;
+  }
+
+  setDebugIdentity(identity: Partial<DebugIdentity>) {
+    this.debugIdentity = { ...this.debugIdentity, ...identity };
+  }
+
+  private getSignalLogDetails(details: Record<string, unknown> = {}) {
+    return {
+      callId: this.state.callId,
+      role: this.state.role,
+      currentCallState: this.state.lifecycle,
+      localProfileId: this.debugIdentity.localProfileId,
+      remoteProfileId: this.debugIdentity.remoteProfileId,
+      ...details,
+    };
   }
 
   private emit() {
@@ -381,31 +402,46 @@ class CallSessionController {
       return;
     }
 
-    const offer = await this.peerConnection.createOffer();
-    logWebRtcEvent("Offer created", {
-      callId: this.state.callId,
-      role: this.state.role,
-    });
-    await this.peerConnection.setLocalDescription(offer);
-    logWebRtcEvent("Local description set", {
-      callId: this.state.callId,
-      role: this.state.role,
-      signal: "offer",
-    });
-    await sendCallSignal(this.state.callId, {
-      senderId: this.clientId,
-      type: "offer",
-      payload: offer,
-    });
-    logWebRtcEvent("Offer sent", {
-      callId: this.state.callId,
-      role: this.state.role,
-    });
-    logLifecycleEvent("OFFER_SENT", {
-      callId: this.state.callId,
-      role: this.state.role,
-      source: "local_offer",
-    });
+    logLifecycleEvent("HOST_OFFER_STARTED", this.getSignalLogDetails({ signal: "offer" }));
+    try {
+      const offer = await this.peerConnection.createOffer();
+      logLifecycleEvent("CREATE_OFFER_SUCCEEDED", this.getSignalLogDetails({ signal: "offer" }));
+      logWebRtcEvent("Offer created", {
+        callId: this.state.callId,
+        role: this.state.role,
+      });
+      await this.peerConnection.setLocalDescription(offer);
+      logLifecycleEvent("SET_LOCAL_DESCRIPTION_SUCCEEDED", this.getSignalLogDetails({ signal: "offer" }));
+      logWebRtcEvent("Local description set", {
+        callId: this.state.callId,
+        role: this.state.role,
+        signal: "offer",
+      });
+      const response = await sendCallSignal(this.state.callId, {
+        senderId: this.clientId,
+        type: "offer",
+        payload: offer,
+      });
+      logLifecycleEvent("OFFER_SEND_SUCCEEDED", this.getSignalLogDetails({ signal: "offer", signalId: response.signalId }));
+      logWebRtcEvent("Offer sent", {
+        callId: this.state.callId,
+        role: this.state.role,
+        signalId: response.signalId,
+      });
+      logLifecycleEvent("OFFER_SENT", {
+        callId: this.state.callId,
+        role: this.state.role,
+        source: "local_offer",
+        signalId: response.signalId,
+      });
+    } catch (error) {
+      logLifecycleEvent("HOST_OFFER_FAILED", this.getSignalLogDetails({
+        signal: "offer",
+        error: describeError(error),
+        stack: error instanceof Error ? error.stack ?? null : null,
+      }));
+      throw error;
+    }
   }
 
   private async maybeStartRecording() {
@@ -739,20 +775,21 @@ class CallSessionController {
     }
 
     if (message.type === "accept" && this.state.role === "host") {
-      logLifecycleEvent("ACCEPTED", {
-        callId: this.state.callId,
-        role: this.state.role,
-        source: "remote_signal",
-      });
+      logLifecycleEvent("ACCEPT_RECEIVED_BY_CALLER", this.getSignalLogDetails({
+        signal: "accept",
+        signalId: message.id,
+        senderId: message.senderId,
+      }));
       this.setState({ guestJoined: true, statusMessage: "Accepted. Connecting memory call...", errorMessage: null });
-      this.transition("accepted", { statusMessage: "Accepted. Connecting memory call...", errorMessage: null }, { signal: "accept" });
+      this.transition("connecting", { statusMessage: "Connecting memory call...", errorMessage: null }, { signal: "accept", signalId: message.id });
       try {
         await this.createHostOffer();
-        this.transition("connecting", { statusMessage: "Connecting memory call...", errorMessage: null }, { signal: "accept" });
       } catch (error) {
         this.signalIssue(describeError(error) || "Unable to send call signaling data.", {
           phase: "offer",
+          signalId: message.id,
         });
+        throw error;
       }
       return;
     }
@@ -887,14 +924,18 @@ class CallSessionController {
     });
 
     const response = await fetchCallSignals(this.state.callId, this.lastSignalAt);
-    logCallEvent("poll_signals_result", {
-      callId: this.state.callId,
+    this.setDebugIdentity({
+      remoteProfileId: this.state.role === "host" ? response.calleeProfileId ?? null : response.creatorProfileId ?? null,
+    });
+    logLifecycleEvent("CALLER_SIGNAL_FETCHED", this.getSignalLogDetails({
       since: this.lastSignalAt,
       messageCount: response.messages.length,
       roomEnded: response.roomEnded,
       invitationStatus: response.invitationStatus,
       invitationId: response.invitationId,
-    });
+      creatorProfileId: response.creatorProfileId ?? null,
+      calleeProfileId: response.calleeProfileId ?? null,
+    }));
 
     for (const message of response.messages) {
       this.lastSignalAt = Math.max(this.lastSignalAt, message.sequence);
@@ -1198,14 +1239,25 @@ class CallSessionController {
         this.transition("ringing", { statusMessage: "Ringing...", errorMessage: null }, { callId, role });
       } else {
         try {
-          await sendCallSignal(callId, {
+          logLifecycleEvent("GUEST_BEGIN_STARTED", this.getSignalLogDetails({ callId, role, signal: "accept" }));
+          logLifecycleEvent("ACCEPT_SEND_STARTED", this.getSignalLogDetails({ callId, role, signal: "accept" }));
+          const response = await sendCallSignal(callId, {
             senderId: this.clientId,
             type: "accept",
             payload: { role },
           });
-          logLifecycleEvent("ACCEPTED", { callId, role, source: "local_signal" });
-          this.transition("accepted", { statusMessage: "Accepted. Connecting memory call...", errorMessage: null }, { callId, role, signal: "accept" });
+          logLifecycleEvent("ACCEPT_SEND_SUCCEEDED", this.getSignalLogDetails({ callId, role, signal: "accept", signalId: response.signalId }));
+          logLifecycleEvent("ACCEPT_PERSISTED", this.getSignalLogDetails({ callId, role, signal: "accept", signalId: response.signalId }));
+          logLifecycleEvent("ACCEPTED", { callId, role, source: "local_signal", signalId: response.signalId });
+          this.transition("accepted", { statusMessage: "Accepted. Connecting memory call...", errorMessage: null }, { callId, role, signal: "accept", signalId: response.signalId });
         } catch (error) {
+          logLifecycleEvent("ACCEPT_SEND_FAILED", this.getSignalLogDetails({
+            callId,
+            role,
+            signal: "accept",
+            error: describeError(error),
+            stack: error instanceof Error ? error.stack ?? null : null,
+          }));
           this.signalIssue(describeError(error) || "Unable to send call signaling data.", {
             callId,
             role,
@@ -1253,6 +1305,7 @@ class CallSessionController {
       { archiveId, message },
     );
   }
+
 
   markFailed(message: string) {
     this.failSession(message, { source: "archive_pipeline" });
@@ -1304,6 +1357,7 @@ export const CallService = {
   toggleSpeaker: () => controller.toggleSpeaker(),
   endCall: () => controller.endCall(),
   dispose: () => controller.dispose(),
+  setDebugIdentity: (identity: Partial<{ localProfileId: string | null; remoteProfileId: string | null }>) => controller.setDebugIdentity(identity),
   setSavingArchive: (isSavingArchive: boolean) => controller.setSavingArchive(isSavingArchive),
   setArchiveResult: (archiveId: string | null, archiveMessage: string | null) => controller.setArchiveResult(archiveId, archiveMessage),
   markArchiving: (message?: string) => controller.markArchiving(message),

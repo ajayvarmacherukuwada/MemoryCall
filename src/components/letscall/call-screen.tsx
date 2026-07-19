@@ -433,6 +433,10 @@ export function CallScreen() {
   const autoStartRequestedRef = useRef(false);
   const completionRef = useRef<CallCompletion | null>(null);
   const profile = useSessionProfile();
+
+  useEffect(() => {
+    CallService.setDebugIdentity({ localProfileId: profile.userId ?? null });
+  }, [profile.userId]);
   const routeCallId = typeof params?.callId === "string" ? params.callId : Array.isArray(params?.callId) ? params.callId[0] ?? null : null;
   const contactNameFromUrl = searchParams.get("name") ?? searchParams.get("person") ?? searchParams.get("contact") ?? "";
   const contactIdFromUrl = searchParams.get("contactId") ?? null;
@@ -486,9 +490,9 @@ export function CallScreen() {
 
 
   useEffect(() => {
-    return () => {
-      CallService.dispose();
-    };
+    // Keep the singleton call service alive across /call -> /call/[callId] route transitions.
+    // The call is explicitly disposed when the session ends.
+    return undefined;
   }, []);
 
   useEffect(() => {

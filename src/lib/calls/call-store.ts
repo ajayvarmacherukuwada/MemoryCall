@@ -10,6 +10,8 @@ type CallSessionRow = {
   next_sequence: number;
   deleted_at: string | null;
   status: string;
+  creator_profile_id: string | null;
+  callee_profile_id: string | null;
 };
 
 type CreateCallRoomDetails = {
@@ -73,7 +75,7 @@ export async function createCallRoomRecord(callId: string, details: CreateCallRo
 
   const { data, error } = await getCallSessionsTable()
     .upsert(payload, { onConflict: "call_id" })
-    .select("call_id, created_at, updated_at, ended_at, message_count, next_sequence, deleted_at, status")
+    .select("call_id, created_at, updated_at, ended_at, message_count, next_sequence, deleted_at, status, creator_profile_id, callee_profile_id")
     .single();
 
   if (error || !data) {
@@ -209,6 +211,8 @@ export async function getCallRoomInfo(callId: string): Promise<CallRoomInfo | nu
     updatedAt: room.updatedAt,
     endedAt: room.endedAt,
     messageCount: (data as CallSessionRow | null)?.message_count ?? 0,
+    creatorProfileId: (data as CallSessionRow | null)?.creator_profile_id ?? null,
+    calleeProfileId: (data as CallSessionRow | null)?.callee_profile_id ?? null,
   };
 }
 

@@ -55,6 +55,8 @@ export type FetchCallSignalsResponse = {
   roomEnded: boolean;
   invitationStatus: "pending" | "accepted" | "declined" | "cancelled" | "expired" | null;
   invitationId: string | null;
+  creatorProfileId: string | null;
+  calleeProfileId: string | null;
 };
 
 let activeChannel: ActiveSignalChannel | null = null;
@@ -235,15 +237,16 @@ export async function getCallRoomInfo(callId: string) {
 
 export async function sendCallSignal(callId: string, message: Omit<CallSignalEnvelope, "id" | "callId" | "sequence" | "createdAt">) {
   const state = await ensureSignalChannel(callId);
+  const signalId = crypto.randomUUID();
   const payload = {
-    id: crypto.randomUUID(),
+    id: signalId,
     senderId: message.senderId,
     type: message.type,
     payload: message.payload ?? null,
     createdAt: Date.now(),
   } satisfies RealtimeSignalPayload;
 
-  logSignalApiEvent("send_signal_request", { callId, type: message.type });
+  logSignalApiEvent("send_signal_request", { callId, type: message.type, signalId });
   const response = await state.channel.send({
     type: "broadcast",
     event: "signal",
@@ -255,8 +258,8 @@ export async function sendCallSignal(callId: string, message: Omit<CallSignalEnv
     throw new Error("Unable to send call signaling data.");
   }
 
-  logSignalApiEvent("send_signal_response", { callId, type: message.type, response });
-  return { ok: true as const };
+  logSignalApiEvent("send_signal_response", { callId, type: message.type, response, signalId });
+  return { ok: true as const, signalId };
 }
 
 export async function fetchCallSignals(callId: string, since = 0) {
@@ -266,7 +269,7 @@ export async function fetchCallSignals(callId: string, since = 0) {
     state.queue.splice(0, messages.length);
   }
 
-  const response = await authFetch<{ roomEnded: boolean; invitationStatus: FetchCallSignalsResponse["invitationStatus"]; invitationId: string | null }>(
+  const response = await authFetch<{ roomEnded: boolean; invitationStatus: FetchCallSignalsResponse["invitationStatus"]; invitationId: string | null; creatorProfileId: string | null; calleeProfileId: string | null }>(
     `/api/calls/${encodeURIComponent(callId)}/signal?since=${encodeURIComponent(String(since))}`,
     {
       method: "GET",
@@ -281,6 +284,8 @@ export async function fetchCallSignals(callId: string, since = 0) {
     invitationStatus: response.invitationStatus,
     invitationId: response.invitationId,
     roomEnded: response.roomEnded,
+    creatorProfileId: response.creatorProfileId,
+    calleeProfileId: response.calleeProfileId,
   });
 
   return {
@@ -288,6 +293,8 @@ export async function fetchCallSignals(callId: string, since = 0) {
     roomEnded: response.roomEnded || messages.some((message) => ["end", "hangup", "decline"].includes(message.type)),
     invitationStatus: response.invitationStatus,
     invitationId: response.invitationId,
+    creatorProfileId: response.creatorProfileId,
+    calleeProfileId: response.calleeProfileId,
   } satisfies FetchCallSignalsResponse;
 }
 
