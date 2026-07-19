@@ -1,4 +1,4 @@
-﻿import crypto from "node:crypto";
+import crypto from "node:crypto";
 import { getSupabaseAdminClient } from "@/lib/server/supabase-admin";
 import { getAppBaseUrl } from "@/lib/server/google-oauth";
 import { getInviteEnv } from "@/lib/env";
@@ -109,6 +109,8 @@ async function ensureContactLink(ownerProfileId: string, contactProfile: Profile
   const { error: insertError } = await supabase.from("contacts").insert({
     owner_profile_id: ownerProfileId,
     contact_profile_id: contactProfile.id,
+    email: contactProfile.email,
+    display_name: normalizedDisplayName || contactProfile.display_name || contactProfile.email,
     contact_email: contactProfile.email,
     contact_display_name: normalizedDisplayName || contactProfile.display_name || contactProfile.email,
     nickname: normalizedDisplayName || null,
@@ -344,3 +346,4 @@ export async function revokeInviteByToken(token: string, inviterProfileId: strin
     throw error;
   }
 }
+

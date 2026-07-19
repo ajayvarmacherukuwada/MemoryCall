@@ -135,6 +135,8 @@ export async function addContactForProfile(profileId: string, email: string, nic
     .insert({
       owner_profile_id: profileId,
       contact_profile_id: targetProfile.id,
+      email: normalizedEmail,
+      display_name: contactDisplayName,
       contact_email: normalizedEmail,
       contact_display_name: contactDisplayName,
       nickname: nickname?.trim() || null,
@@ -446,5 +448,6 @@ export async function cancelCallInvitation(callId: string, profileId?: string | 
     throw error;
   }
 }
+
 
 
