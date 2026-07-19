@@ -100,24 +100,21 @@ export async function POST(request: Request, context: { params: Promise<{ callId
       sequence: stored?.nextSequence ? stored.nextSequence - 1 : null,
     });
 
-    if (payload.type === "join") {
-      logApiEvent("Participant joined room", { callId, senderId: payload.senderId });
-    }
+    const lifecycleLogMap = {
+      join: "Participant joined room",
+      accept: "Call accepted",
+      decline: "Call declined",
+      offer: "Offer created",
+      answer: "Answer created",
+      candidate: "Candidate sent",
+      connected: "Peer connected",
+      end: "Call ended",
+      hangup: "Call ended",
+    } as const;
 
-    if (payload.type === "offer") {
-      logApiEvent("Offer created", { callId, senderId: payload.senderId });
-    }
-
-    if (payload.type === "answer") {
-      logApiEvent("Answer created", { callId, senderId: payload.senderId });
-    }
-
-    if (payload.type === "candidate") {
-      logApiEvent("Candidate sent", { callId, senderId: payload.senderId });
-    }
-
-    if (payload.type === "hangup") {
-      logApiEvent("Hangup sent", { callId, senderId: payload.senderId });
+    const lifecycleLog = lifecycleLogMap[payload.type as keyof typeof lifecycleLogMap];
+    if (lifecycleLog) {
+      logApiEvent(lifecycleLog, { callId, senderId: payload.senderId, type: payload.type });
     }
 
     return NextResponse.json({ ok: true });

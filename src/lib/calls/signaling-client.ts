@@ -9,7 +9,7 @@ export type CallSignalEnvelope = {
   callId: string;
   sequence: number;
   senderId: string;
-  type: "join" | "offer" | "answer" | "candidate" | "hangup";
+  type: "join" | "accept" | "decline" | "offer" | "answer" | "candidate" | "connected" | "end" | "hangup";
   payload: unknown;
   createdAt: number;
 };
@@ -285,7 +285,7 @@ export async function fetchCallSignals(callId: string, since = 0) {
 
   return {
     messages,
-    roomEnded: response.roomEnded || messages.some((message) => message.type === "hangup"),
+    roomEnded: response.roomEnded || messages.some((message) => ["end", "hangup", "decline"].includes(message.type)),
     invitationStatus: response.invitationStatus,
     invitationId: response.invitationId,
   } satisfies FetchCallSignalsResponse;

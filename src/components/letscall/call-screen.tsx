@@ -79,7 +79,10 @@ function getFriendlyCallStatus(lifecycle: string) {
       return "Connecting...";
     case "waiting":
     case "waiting_for_participant":
+    case "ringing":
       return "Ringing...";
+    case "accepted":
+      return "Accepted...";
     case "reconnecting":
       return "Reconnecting...";
     case "connected":
@@ -90,7 +93,10 @@ function getFriendlyCallStatus(lifecycle: string) {
     case "archiving":
       return "Saving Memory...";
     case "ending":
-      return "Ending Call...";
+    case "ended":
+      return "Call ended";
+    case "declined":
+      return "Declined";
     case "success":
       return "Completed";
     case "failed":
@@ -277,7 +283,12 @@ function CallStage({
   const cameraActive = Boolean(cameraTrack && cameraTrack.enabled && snapshot.cameraEnabled);
   const previewMirrored = snapshot.cameraFacingMode === "user";
   const connectedTimer =
-    snapshot.remoteStream || snapshot.recordingActive || snapshot.lifecycle === "recording" || snapshot.lifecycle === "finalizing_recording" || snapshot.lifecycle === "archiving"
+    snapshot.lifecycle === "connected" ||
+    snapshot.remoteStream ||
+    snapshot.recordingActive ||
+    snapshot.lifecycle === "recording" ||
+    snapshot.lifecycle === "finalizing_recording" ||
+    snapshot.lifecycle === "archiving"
       ? formatDuration(snapshot.elapsedSeconds)
       : null;
 
@@ -506,6 +517,19 @@ export function CallScreen() {
     }, 1200);
     return () => window.clearTimeout(timeout);
   }, [router, savedMemory]);
+
+  useEffect(() => {
+    if (busy || savedMemory || archiveSetupRequired || snapshot.lifecycle === "failed") {
+      return;
+    }
+
+    if (snapshot.lifecycle === "ended" || snapshot.lifecycle === "declined") {
+      const timeout = window.setTimeout(() => {
+        router.replace("/");
+      }, 250);
+      return () => window.clearTimeout(timeout);
+    }
+  }, [archiveSetupRequired, busy, router, savedMemory, snapshot.lifecycle]);
 
   const isArchiving = snapshot.lifecycle === "archiving";
   const isFailed = snapshot.lifecycle === "failed";

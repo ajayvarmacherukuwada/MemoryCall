@@ -7,16 +7,20 @@ export type CallLifecycle =
   | "waiting"
   | "waiting_for_participant"
   | "reconnecting"
+  | "ringing"
+  | "accepted"
   | "connecting"
   | "connected"
   | "recording"
   | "ending"
+  | "ended"
+  | "declined"
   | "finalizing_recording"
   | "archiving"
   | "success"
   | "failed";
 
-export type CallSignalType = "join" | "offer" | "answer" | "candidate" | "hangup";
+export type CallSignalType = "join" | "accept" | "decline" | "offer" | "answer" | "candidate" | "connected" | "end" | "hangup";
 
 export type CallSignalMessage = {
   id: string;

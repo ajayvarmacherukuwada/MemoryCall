@@ -51,7 +51,7 @@ const DEFAULT_STATE: CallState = {
   archiveMessage: null,
 };
 
-type TerminationReason = "local_end" | "remote_hangup" | "room_ended" | "remote_declined";
+type TerminationReason = "local_end" | "remote_hangup" | "remote_end" | "room_ended" | "remote_declined";
 
 function getClientId() {
   if (typeof window === "undefined") {
@@ -184,6 +184,9 @@ class CallSessionController {
   private hasStartedRecording = false;
   private isEnding = false;
   private currentCompletion: CallCompletion | null = null;
+  private localPeerConnected = false;
+  private remotePeerConnected = false;
+  private connectedSignalSent = false;
 
   subscribe(listener: Listener) {
     this.listeners.add(listener);
@@ -265,7 +268,39 @@ class CallSessionController {
     this.startedAt = 0;
     this.hasStartedRecording = false;
     this.currentCompletion = null;
+    this.localPeerConnected = false;
+    this.remotePeerConnected = false;
+    this.connectedSignalSent = false;
     this.isEnding = false;
+  }
+
+  private maybeFinalizeConnectedState() {
+    if (!this.peerConnection || this.peerConnection.connectionState !== "connected") {
+      return;
+    }
+
+    if (!this.localPeerConnected || !this.remotePeerConnected) {
+      return;
+    }
+
+    if (this.state.lifecycle !== "connected") {
+      this.transition(
+        "connected",
+        {
+          guestJoined: true,
+          statusMessage: "Connected. Waiting for recording to start.",
+          errorMessage: null,
+        },
+        { connectionState: this.peerConnection.connectionState, source: "signal_sync" },
+      );
+    }
+
+    void this.maybeStartRecording().catch((error) => {
+      logCallEvent("recording_start_failed", {
+        callId: this.state.callId,
+        error: describeError(error),
+      });
+    });
   }
 
   private stopTimers() {
@@ -366,6 +401,11 @@ class CallSessionController {
       callId: this.state.callId,
       role: this.state.role,
     });
+    logLifecycleEvent("OFFER_SENT", {
+      callId: this.state.callId,
+      role: this.state.role,
+      source: "local_offer",
+    });
   }
 
   private async maybeStartRecording() {
@@ -376,6 +416,8 @@ class CallSessionController {
       hasPeerConnection: Boolean(this.peerConnection),
       connectionState: this.peerConnection?.connectionState ?? null,
       hasStartedRecording: this.hasStartedRecording,
+      localPeerConnected: this.localPeerConnected,
+      remotePeerConnected: this.remotePeerConnected,
     });
 
     if (
@@ -383,7 +425,9 @@ class CallSessionController {
       !this.state.localStream ||
       !this.state.remoteStream ||
       !this.peerConnection ||
-      this.peerConnection.connectionState !== "connected"
+      this.peerConnection.connectionState !== "connected" ||
+      !this.localPeerConnected ||
+      !this.remotePeerConnected
     ) {
       logCallEvent("recording_start_skipped", {
         callId: this.state.callId,
@@ -392,6 +436,8 @@ class CallSessionController {
         hasPeerConnection: Boolean(this.peerConnection),
         connectionState: this.peerConnection?.connectionState ?? null,
         hasStartedRecording: this.hasStartedRecording,
+        localPeerConnected: this.localPeerConnected,
+        remotePeerConnected: this.remotePeerConnected,
       });
       return false;
     }
@@ -406,7 +452,9 @@ class CallSessionController {
       !this.state.localStream ||
       !this.state.remoteStream ||
       !this.peerConnection ||
-      this.peerConnection.connectionState !== "connected"
+      this.peerConnection.connectionState !== "connected" ||
+      !this.localPeerConnected ||
+      !this.remotePeerConnected
     ) {
       throw new Error("Recording can only start after the call is connected.");
     }
@@ -525,6 +573,12 @@ class CallSessionController {
             sdpMid: candidateJson.sdpMid,
             sdpMLineIndex: candidateJson.sdpMLineIndex,
           });
+          logLifecycleEvent("ICE_SENT", {
+            callId: this.state.callId,
+            role: this.state.role,
+            sdpMid: candidateJson.sdpMid,
+            sdpMLineIndex: candidateJson.sdpMLineIndex,
+          });
         })
         .catch((error) => {
           logCallEvent("signal_candidate_failed", {
@@ -540,6 +594,12 @@ class CallSessionController {
 
       if (this.state.remoteStream !== remoteStream) {
         logMediaEvent("Remote track received", {
+          callId: this.state.callId,
+          role: this.state.role,
+          audioTracks: remoteStream.getAudioTracks().length,
+          videoTracks: remoteStream.getVideoTracks().length,
+        });
+        logLifecycleEvent("REMOTE_TRACK", {
           callId: this.state.callId,
           role: this.state.role,
           audioTracks: remoteStream.getAudioTracks().length,
@@ -575,26 +635,39 @@ class CallSessionController {
       }
 
       if (peerConnection.connectionState === "connected") {
+        this.localPeerConnected = true;
         logLifecycleEvent("CALL_CONNECTED", {
           callId: this.state.callId,
           role: this.state.role,
           connectionState: peerConnection.connectionState,
         });
-        this.transition(
-          "connected",
-          {
-            guestJoined: true,
-            statusMessage: "Connected. Waiting for recording to start.",
-            errorMessage: null,
-          },
-          { connectionState: peerConnection.connectionState },
-        );
-        void this.maybeStartRecording().catch((error) => {
-          logCallEvent("recording_start_failed", {
-            callId: this.state.callId,
-            error: describeError(error),
-          });
+        logLifecycleEvent("CONNECTED", {
+          callId: this.state.callId,
+          role: this.state.role,
+          source: "local_connection",
         });
+        if (!this.connectedSignalSent && this.state.callId) {
+          this.connectedSignalSent = true;
+          void sendCallSignal(this.state.callId, {
+            senderId: this.clientId,
+            type: "connected",
+            payload: { connectionState: "connected" },
+          })
+            .then(() => {
+              logLifecycleEvent("CONNECTED", {
+                callId: this.state.callId,
+                role: this.state.role,
+                source: "local_signal",
+              });
+            })
+            .catch((error) => {
+              logCallEvent("signal_connected_failed", {
+                callId: this.state.callId,
+                error: describeError(error),
+              });
+            });
+        }
+        this.maybeFinalizeConnectedState();
       }
 
       if (peerConnection.connectionState === "disconnected" || peerConnection.connectionState === "failed") {
@@ -659,20 +732,37 @@ class CallSessionController {
       this.setState({ guestJoined: true, statusMessage: "The other person joined the call.", errorMessage: null });
 
       if (this.state.role === "host") {
-        try {
-          await this.createHostOffer();
-          logLifecycleEvent("WAITING_FOR_PARTICIPANT", { callId: this.state.callId, role: this.state.role, signal: "join" });
-          this.transition("waiting_for_participant", { statusMessage: "Waiting for participant...", errorMessage: null }, { callId: this.state.callId, role: this.state.role, signal: "join" });
-        } catch (error) {
-          this.signalIssue(describeError(error) || "Unable to send call signaling data.", {
-            phase: "offer",
-          });
-        }
+        this.transition("ringing", { statusMessage: "Ringing...", errorMessage: null }, { callId: this.state.callId, role: this.state.role, signal: "join" });
+      }
+
+      return;
+    }
+
+    if (message.type === "accept" && this.state.role === "host") {
+      logLifecycleEvent("ACCEPTED", {
+        callId: this.state.callId,
+        role: this.state.role,
+        source: "remote_signal",
+      });
+      this.setState({ guestJoined: true, statusMessage: "Accepted. Connecting memory call...", errorMessage: null });
+      this.transition("accepted", { statusMessage: "Accepted. Connecting memory call...", errorMessage: null }, { signal: "accept" });
+      try {
+        await this.createHostOffer();
+        this.transition("connecting", { statusMessage: "Connecting memory call...", errorMessage: null }, { signal: "accept" });
+      } catch (error) {
+        this.signalIssue(describeError(error) || "Unable to send call signaling data.", {
+          phase: "offer",
+        });
       }
       return;
     }
 
     if (message.type === "offer" && this.state.role === "guest") {
+      logLifecycleEvent("OFFER_RECEIVED", {
+        callId: this.state.callId,
+        role: this.state.role,
+        senderId: message.senderId,
+      });
       logWebRtcEvent("Offer received", { callId: this.state.callId, senderId: message.senderId });
       await this.peerConnection.setRemoteDescription(new RTCSessionDescription(message.payload as RTCSessionDescriptionInit));
       this.remoteDescriptionSet = true;
@@ -684,6 +774,10 @@ class CallSessionController {
           senderId: this.clientId,
           type: "answer",
           payload: answer,
+        });
+        logLifecycleEvent("ANSWER_SENT", {
+          callId: this.state.callId,
+          role: this.state.role,
         });
         logWebRtcEvent("Answer sent", {
           callId: this.state.callId,
@@ -706,6 +800,11 @@ class CallSessionController {
     }
 
     if (message.type === "answer" && this.state.role === "host") {
+      logLifecycleEvent("ANSWER_RECEIVED", {
+        callId: this.state.callId,
+        role: this.state.role,
+        senderId: message.senderId,
+      });
       logWebRtcEvent("Answer received", { callId: this.state.callId, senderId: message.senderId });
       await this.peerConnection.setRemoteDescription(new RTCSessionDescription(message.payload as RTCSessionDescriptionInit));
       this.remoteDescriptionSet = true;
@@ -719,7 +818,23 @@ class CallSessionController {
       return;
     }
 
+    if (message.type === "connected") {
+      this.remotePeerConnected = true;
+      logLifecycleEvent("CONNECTED", {
+        callId: this.state.callId,
+        role: this.state.role,
+        source: "remote_signal",
+      });
+      this.maybeFinalizeConnectedState();
+      return;
+    }
+
     if (message.type === "candidate") {
+      logLifecycleEvent("ICE_RECEIVED", {
+        callId: this.state.callId,
+        role: this.state.role,
+        senderId: message.senderId,
+      });
       logIceEvent("Candidate received", { callId: this.state.callId, senderId: message.senderId });
       const candidate = message.payload as RTCIceCandidateInit;
       if (!this.remoteDescriptionSet) {
@@ -738,9 +853,25 @@ class CallSessionController {
       return;
     }
 
-    if (message.type === "hangup") {
-      this.transition("ending", { statusMessage: "The other person ended the call." }, { signal: "hangup" });
-      await this.terminateCall({ notifyPeer: false, reason: "remote_hangup" });
+    if (message.type === "end" || message.type === "hangup") {
+      logLifecycleEvent("END_RECEIVED", {
+        callId: this.state.callId,
+        role: this.state.role,
+        signal: message.type,
+      });
+      this.transition("ended", { statusMessage: "The other person ended the call." }, { signal: message.type });
+      await this.terminateCall({ notifyPeer: false, reason: message.type === "end" ? "remote_end" : "remote_hangup" });
+      return;
+    }
+
+    if (message.type === "decline") {
+      logLifecycleEvent("DECLINED", {
+        callId: this.state.callId,
+        role: this.state.role,
+        signal: "decline",
+      });
+      this.transition("declined", { statusMessage: "The other person declined the call." }, { signal: "decline" });
+      await this.terminateCall({ notifyPeer: false, reason: "remote_declined" });
     }
   }
 
@@ -771,14 +902,15 @@ class CallSessionController {
     }
 
     if (response.roomEnded) {
-      this.transition("ending", { statusMessage: "The call has ended." }, { roomEnded: true });
+      this.transition("ended", { statusMessage: "The call has ended." }, { roomEnded: true });
       await this.terminateCall({ notifyPeer: false, reason: "room_ended" });
       return;
     }
 
     if (this.state.role === "host" && response.invitationStatus && ["declined", "cancelled", "expired"].includes(response.invitationStatus)) {
-      this.transition("ending", { statusMessage: "The call was declined." }, { invitationStatus: response.invitationStatus });
-      await this.terminateCall({ notifyPeer: false, reason: "remote_declined" });
+      const declined = response.invitationStatus === "declined";
+      this.transition(declined ? "declined" : "ended", { statusMessage: declined ? "The call was declined." : "The call invitation ended." }, { invitationStatus: response.invitationStatus });
+      await this.terminateCall({ notifyPeer: false, reason: declined ? "remote_declined" : "room_ended" });
     }
   }
 
@@ -805,10 +937,15 @@ class CallSessionController {
       this.transition("ending", { statusMessage: "Ending call..." }, { reason: options.reason });
 
       if (options.notifyPeer && this.state.callId) {
+        logLifecycleEvent("END_SENT", {
+          callId: this.state.callId,
+          role: this.state.role,
+          reason: options.reason,
+        });
         await withTimeout(
           sendCallSignal(this.state.callId, {
             senderId: this.clientId,
-            type: "hangup",
+            type: "end",
             payload: null,
           }),
           5000,
@@ -821,15 +958,16 @@ class CallSessionController {
       recording = await withTimeout(this.stopRecording(), 15000, "Timed out while finalizing the recording.");
 
       if (!recording) {
+        const finalLifecycle = options.reason === "remote_declined" ? "declined" : "ended";
         this.transition(
-          "success",
+          finalLifecycle,
           {
             recordingActive: false,
             isSavingArchive: false,
             archiveId: null,
-            archiveMessage: "Call ended.",
+            archiveMessage: finalLifecycle === "declined" ? "The call was declined." : "Call ended.",
             errorMessage: null,
-            statusMessage: "Call ended.",
+            statusMessage: finalLifecycle === "declined" ? "The call was declined." : "Call ended.",
           },
           { reason: options.reason, recording: false },
         );
@@ -890,8 +1028,14 @@ class CallSessionController {
       this.stopLocalStreams();
       this.isEnding = false;
       void disconnectCallSignalChannel(activeCallId);
+      logLifecycleEvent("CLOSED", {
+        callId: activeCallId,
+        role: this.state.role,
+        reason: options.reason,
+      });
     }
   }
+
   async startHostCall(options: CreateCallOptions = {}) {
     const response = await createCallRoom(options);
     logLifecycleEvent("CALL_CREATED", { callId: response.callId, role: "host" });
@@ -905,7 +1049,7 @@ class CallSessionController {
 
   async joinCall(callId: string) {
     logJoinEvent("Join requested", { callId });
-    logLifecycleEvent("WAITING_FOR_PARTICIPANT", { callId, role: "guest" });
+    logLifecycleEvent("INCOMING_RECEIVED", { callId, role: "guest", source: "join_call" });
     logCallEvent("join_call", { callId });
     await this.begin(callId, "guest");
   }
@@ -963,6 +1107,7 @@ class CallSessionController {
 
     localTrack.enabled = !localTrack.enabled;
     this.setState({ cameraEnabled: localTrack.enabled });
+    logLifecycleEvent(localTrack.enabled ? "CAMERA_ON" : "CAMERA_OFF", { callId: this.state.callId, enabled: localTrack.enabled });
     logCallEvent("toggle_camera", { callId: this.state.callId, enabled: localTrack.enabled });
   }
 
@@ -1049,11 +1194,25 @@ class CallSessionController {
       }
 
       if (role === "host") {
-        logLifecycleEvent("WAITING_FOR_PARTICIPANT", { callId, role });
-        this.transition("waiting_for_participant", { statusMessage: "Waiting for participant...", errorMessage: null }, { callId, role });
+        logLifecycleEvent("RINGING", { callId, role });
+        this.transition("ringing", { statusMessage: "Ringing...", errorMessage: null }, { callId, role });
       } else {
-        logLifecycleEvent("WAITING_FOR_PARTICIPANT", { callId, role });
-        this.transition("connecting", { statusMessage: "Connecting memory call...", errorMessage: null }, { callId, role });
+        try {
+          await sendCallSignal(callId, {
+            senderId: this.clientId,
+            type: "accept",
+            payload: { role },
+          });
+          logLifecycleEvent("ACCEPTED", { callId, role, source: "local_signal" });
+          this.transition("accepted", { statusMessage: "Accepted. Connecting memory call...", errorMessage: null }, { callId, role, signal: "accept" });
+        } catch (error) {
+          this.signalIssue(describeError(error) || "Unable to send call signaling data.", {
+            callId,
+            role,
+            phase: "accept",
+          });
+          return;
+        }
       }
 
     } catch (error) {

@@ -9,6 +9,10 @@ function formatCallType(mode: IncomingCallInvitation["mode"]) {
   return mode === "audio" ? "Audio call" : "Video call";
 }
 
+function logIncomingCallEvent(step: string, details: Record<string, unknown>) {
+  console.info("[LetsCall][IncomingCall]", JSON.stringify({ step, at: new Date().toISOString(), ...details }));
+}
+
 export function IncomingCallScreen({ invitationId }: { invitationId: string }) {
   const router = useRouter();
   const [invitation, setInvitation] = useState<IncomingCallInvitation | null>(null);
@@ -21,14 +25,22 @@ export function IncomingCallScreen({ invitationId }: { invitationId: string }) {
 
     const loadInvitation = async () => {
       try {
+        logIncomingCallEvent("INCOMING_RECEIVED", { invitationId });
         const response = await fetchInvitation(invitationId);
         if (!cancelled) {
           setInvitation(response.invitation);
           setError(null);
+          logIncomingCallEvent("INCOMING_LOADED", {
+            invitationId,
+            callId: response.invitation?.callId ?? null,
+            status: response.invitation?.status ?? null,
+          });
         }
       } catch (loadError) {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "Unable to load this call invitation.");
+          const message = loadError instanceof Error ? loadError.message : "Unable to load this call invitation.";
+          setError(message);
+          logIncomingCallEvent("INCOMING_LOAD_FAILED", { invitationId, error: message });
         }
       } finally {
         if (!cancelled) {
@@ -49,6 +61,7 @@ export function IncomingCallScreen({ invitationId }: { invitationId: string }) {
     setError(null);
 
     try {
+      logIncomingCallEvent("ACCEPTED", { invitationId: invitation.id, callId: invitation.callId });
       const response = await acceptInvitation(invitation.id);
       router.replace(`/call/${encodeURIComponent(response.callId)}`);
     } catch (acceptError) {
@@ -63,6 +76,7 @@ export function IncomingCallScreen({ invitationId }: { invitationId: string }) {
     setError(null);
 
     try {
+      logIncomingCallEvent("DECLINED", { invitationId: invitation.id, callId: invitation.callId });
       await declineInvitation(invitation.id);
       router.replace("/");
     } catch (declineError) {

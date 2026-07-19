@@ -140,8 +140,18 @@ export async function appendCallSignalMessage(message: Omit<CallSignalMessage, "
     last_signal_at: now,
     message_count: (existingRow.message_count ?? 0) + 1,
     next_sequence: nextSequence + 1,
-    status: message.type === "hangup" ? "ended" : existingRow.status,
-    ended_at: message.type === "hangup" ? existingRow.ended_at ?? now : existingRow.ended_at,
+    status:
+      message.type === "accept"
+        ? "accepted"
+        : message.type === "decline"
+          ? "declined"
+          : message.type === "end" || message.type === "hangup"
+            ? "ended"
+            : existingRow.status,
+    ended_at:
+      message.type === "end" || message.type === "hangup" || message.type === "decline"
+        ? existingRow.ended_at ?? now
+        : existingRow.ended_at,
     updated_at: now,
   };
 
