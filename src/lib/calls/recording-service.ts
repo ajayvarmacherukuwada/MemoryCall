@@ -126,8 +126,22 @@ export function createRecordingSession(options: RecordingOptions) {
 
   const remoteVideo = document.createElement("video");
   remoteVideo.autoplay = true;
+  remoteVideo.muted = true;
   remoteVideo.playsInline = true;
   remoteVideo.srcObject = options.remoteStream;
+
+  void localVideo.play().catch((error) => {
+    logRecordingEvent("local_video_play_failed", {
+      sessionId: recordingSessionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+  void remoteVideo.play().catch((error) => {
+    logRecordingEvent("remote_video_play_failed", {
+      sessionId: recordingSessionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 
   const audioMixer = createAudioMixer(options.localStream, options.remoteStream);
   const canvasStream = canvas.captureStream(30);

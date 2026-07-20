@@ -1034,12 +1034,26 @@ class CallSessionController {
         durationSeconds: this.currentCompletion.durationSeconds,
       });
 
-      this.setState({
-        recordingActive: false,
-        localStreamReady: false,
-        remoteStreamReady: false,
-        guestJoined: false,
-      });
+      this.transition(
+        options.reason === "remote_declined" ? "declined" : "ended",
+        {
+          recordingActive: false,
+          localStreamReady: false,
+          remoteStreamReady: false,
+          guestJoined: false,
+          isSavingArchive: false,
+          archiveId: null,
+          archiveMessage: options.reason === "remote_declined" ? "The call was declined." : "Call completed. Save the recording.",
+          errorMessage: null,
+          statusMessage: options.reason === "remote_declined" ? "The call was declined." : "Call completed. Save the recording.",
+        },
+        {
+          reason: options.reason,
+          recording: true,
+          durationSeconds: recording.durationSeconds,
+          fileName: recording.file.name,
+        },
+      );
 
       logCallEvent("recording_finalized", {
         callId: this.state.callId,
@@ -1365,6 +1379,7 @@ export const CallService = {
   markFailed: (message: string) => controller.markFailed(message),
   getCompletion: () => controller.getCompletion(),
 };
+
 
 
 

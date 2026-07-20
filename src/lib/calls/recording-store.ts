@@ -23,6 +23,17 @@ const DB_VERSION = 1;
 const SESSION_STORE = "recording_sessions";
 const CHUNK_STORE = "recording_chunks";
 const PENDING_COMPLETION_PREFIX = "letscall.pending-recording.";
+const listeners = new Set<() => void>();
+
+function emitRecordingStoreChange() {
+  for (const listener of listeners) {
+    try {
+      listener();
+    } catch {
+      // Ignore listener errors so one bad subscriber does not break the store.
+    }
+  }
+}
 
 type RecordingChunkRecord = {
   id?: number;
@@ -349,10 +360,11 @@ export function setPendingRecordingPointer(callId: string | null, sessionId: str
   const key = `${PENDING_COMPLETION_PREFIX}${callId ?? "unknown"}`;
   if (!sessionId) {
     window.localStorage.removeItem(key);
+    emitRecordingStoreChange();
     return;
   }
 
-  window.localStorage.setItem(
+    window.localStorage.setItem(
     key,
     JSON.stringify({
       callId,
@@ -361,6 +373,7 @@ export function setPendingRecordingPointer(callId: string | null, sessionId: str
       updatedAt: Date.now(),
     }),
   );
+  emitRecordingStoreChange();
 }
 
 export function getPendingRecordingPointer(callId: string | null) {
@@ -377,3 +390,10 @@ export function getPendingRecordingPointer(callId: string | null) {
   }
 }
 
+
+export function subscribeRecordingStore(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}

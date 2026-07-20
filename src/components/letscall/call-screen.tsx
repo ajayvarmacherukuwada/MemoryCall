@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 import { AppShell, Avatar, GlassCard } from "@/components/letscall/mobile-shell";
 import { useSessionProfile } from "@/components/letscall/use-session-profile";
 import { CallService } from "@/lib/calls/call-service";
-import { buildRecordingFile, clearRecordingSession, getPendingRecordingPointer } from "@/lib/calls/recording-store";
+import { buildRecordingFile, clearRecordingSession, getPendingRecordingPointer, subscribeRecordingStore } from "@/lib/calls/recording-store";
 import { MemoryArchiveService } from "@/lib/memory-archive/memory-archive-service";
 import type { CallCompletion, CallSnapshot } from "@/lib/calls/types";
 import type { MemoryArchiveRecord } from "@/lib/memory-archive/types";
@@ -482,8 +482,10 @@ export function CallScreen() {
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const [archiveProgress, setArchiveProgress] = useState(0);
   const [archiveMessage, setArchiveMessage] = useState("Preparing memory...");
+  const [recordingPreparationTimedOut, setRecordingPreparationTimedOut] = useState(false);
   const [inviteCopyState, setInviteCopyState] = useState<"idle" | "copied">("idle");
   const archiveStartedRef = useRef(false);
+  const finalizingWatchdogRef = useRef<number | null>(null);
   const [pendingRecordingPointer, setPendingRecordingPointer] = useState(() => {
     const currentCallId = typeof params?.callId === "string" ? params.callId : Array.isArray(params?.callId) ? params.callId[0] ?? null : null;
     return typeof window !== "undefined" ? getPendingRecordingPointer(currentCallId) : null;
@@ -520,6 +522,7 @@ export function CallScreen() {
     setArchiveSetupRequired(false);
     setArchiveProgress(0);
     setArchiveMessage("Preparing memory...");
+    setRecordingPreparationTimedOut(false);
   }, [snapshot.callId]);
 
   const normalizedJoinCode = joinCode.replace(/\s+/g, "").trim().toUpperCase();
@@ -706,6 +709,7 @@ export function CallScreen() {
     };
   }, [archiveSetupRequired, busy, postCallCompletion, routeCallId, router, savedMemory, snapshot.callId, snapshot.lifecycle]);
 
+
   const isArchiving = snapshot.lifecycle === "archiving";
   const isFailed = snapshot.lifecycle === "failed";
 
@@ -886,7 +890,47 @@ export function CallScreen() {
     await archiveCompletion(completion);
   };
 
-  const handleSaveRecording = async () => {
+  const handleRetryFinalizingRecording = async () => {
+    setRecordingPreparationTimedOut(false);
+    logCallUiEvent("finalizing_retry_requested", { callId: snapshot.callId });
+
+    const liveCompletion = completionRef.current ?? CallService.getCompletion();
+    if (liveCompletion?.recording) {
+      setPostCallCompletion(liveCompletion);
+      return;
+    }
+
+    const callId = snapshot.callId ?? routeCallId;
+    if (!callId) {
+      return;
+    }
+
+    const pointer = getPendingRecordingPointer(callId);
+    if (!pointer?.sessionId) {
+      setRecordingPreparationTimedOut(true);
+      return;
+    }
+
+    const recovered = await buildRecordingFile(pointer.sessionId);
+    if (!recovered?.file) {
+      setRecordingPreparationTimedOut(true);
+      return;
+    }
+
+    const completion: CallCompletion = {
+      recording: recovered.file,
+      durationSeconds: recovered.session.durationSeconds ?? 1,
+      title: recovered.session.title,
+      description: recovered.session.description,
+      recordingSessionId: recovered.session.sessionId,
+      chunkCount: recovered.session.chunkCount,
+      totalBytes: recovered.session.totalBytes,
+      mimeType: recovered.session.mimeType,
+    };
+
+    completionRef.current = completion;
+    setPostCallCompletion(completion);
+  };  const handleSaveRecording = async () => {
     const completion = postCallCompletion ?? completionRef.current ?? CallService.getCompletion();
     if (!completion?.recording) {
       return;
@@ -931,6 +975,29 @@ export function CallScreen() {
       ? "Call disconnected."
       : "Call completed.";
 
+  useEffect(() => {
+    if (finalizingWatchdogRef.current !== null) {
+      window.clearTimeout(finalizingWatchdogRef.current);
+      finalizingWatchdogRef.current = null;
+    }
+
+    if (savedMemory || archiveSetupRequired || isFailed || callEndedSummaryVisible || snapshot.lifecycle !== "finalizing_recording") {
+      setRecordingPreparationTimedOut(false);
+      return undefined;
+    }
+
+    setRecordingPreparationTimedOut(false);
+    finalizingWatchdogRef.current = window.setTimeout(() => {
+      setRecordingPreparationTimedOut(true);
+    }, 5000);
+
+    return () => {
+      if (finalizingWatchdogRef.current !== null) {
+        window.clearTimeout(finalizingWatchdogRef.current);
+        finalizingWatchdogRef.current = null;
+      }
+    };
+  }, [archiveSetupRequired, callEndedSummaryVisible, isFailed, savedMemory, snapshot.lifecycle]);
   const renderShell = (content: ReactNode) => (
     <AppShell
       activeTab="home"
@@ -987,18 +1054,25 @@ export function CallScreen() {
     );
   }
 
-  if (snapshot.lifecycle === "archiving" || snapshot.lifecycle === "finalizing_recording") {
-    const title = snapshot.lifecycle === "finalizing_recording" ? "Finalizing recording..." : "Saving memory...";
+  if ((snapshot.lifecycle === "archiving" || snapshot.lifecycle === "finalizing_recording") && !callEndedSummaryVisible) {
+    const isWaitingOnFinalization = snapshot.lifecycle === "finalizing_recording" && recordingPreparationTimedOut;
+    const title = isWaitingOnFinalization ? "Still preparing your recording..." : snapshot.lifecycle === "finalizing_recording" ? "Finalizing recording..." : "Saving memory...";
     const progress = snapshot.lifecycle === "finalizing_recording" ? 28 : archiveProgress;
     return renderShell(
       <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(147,244,213,0.14),_transparent_28%),radial-gradient(circle_at_bottom,_rgba(92,132,255,0.16),_transparent_30%),linear-gradient(180deg,#081017_0%,#05070b_100%)]">
         <div className="mx-auto flex h-full w-full max-w-[560px] flex-col justify-center px-4 py-4 sm:px-5">
-          <CallProgressCard title={title} message={archiveMessage} progress={progress} error={archiveError} />
+          <CallProgressCard
+            title={title}
+            message={isWaitingOnFinalization ? "This is taking longer than expected. Tap Retry to check again." : archiveMessage}
+            progress={progress}
+            error={isWaitingOnFinalization ? "Still preparing your recording..." : archiveError}
+            onRetry={isWaitingOnFinalization ? handleRetryFinalizingRecording : archiveError ? handleRetryArchive : undefined}
+            retryLabel={isWaitingOnFinalization ? "Retry" : "Retry archive"}
+          />
         </div>
       </div>
     );
   }
-
   if (callEndedSummaryVisible && pendingCompletion) {
     return renderShell(
       <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(147,244,213,0.14),_transparent_28%),radial-gradient(circle_at_bottom,_rgba(92,132,255,0.16),_transparent_30%),linear-gradient(180deg,#081017_0%,#05070b_100%)]">
