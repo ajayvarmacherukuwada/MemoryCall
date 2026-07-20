@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { AppShell, Avatar } from "@/components/letscall/mobile-shell";
 import { useSessionProfile } from "@/components/letscall/use-session-profile";
-import { clearLocalAuthSession } from "@/lib/supabase-browser";
+import { clearLocalAuthSession, signInWithGoogleSession } from "@/lib/supabase-browser";
 import { disconnectGoogleProvider, startGoogleProviderConnection } from "@/lib/provider-session";
 
 type ServiceKey = "google" | "youtube";
@@ -97,6 +97,11 @@ export function ProfileScreen() {
   const beginGoogleAuth = async () => {
     setBusy("google");
     try {
+      if (!profile.signedIn) {
+        await signInWithGoogleSession("/profile");
+        return;
+      }
+
       await startGoogleProviderConnection("/profile");
     } finally {
       setBusy(null);
@@ -288,3 +293,5 @@ export function ProfileScreen() {
 }
 
 export const ProfilePlaceholder = ProfileScreen;
+
+
