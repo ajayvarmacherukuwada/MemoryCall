@@ -31,24 +31,24 @@ const tabs: Array<{
     ),
   },
   {
-    id: "search",
-    href: "/search",
-    label: "Search",
+    id: "people",
+    href: "/people",
+    label: "People",
     icon: (
       <>
-        <circle cx="11" cy="11" r="5.3" />
-        <path d="m15.2 15.2 3 3" strokeLinecap="round" />
+        <circle cx="12" cy="9" r="3.4" />
+        <path d="M6.5 18.2c1.3-2.5 3.6-3.8 5.5-3.8s4.2 1.3 5.5 3.8" strokeLinecap="round" />
       </>
     ),
   },
   {
     id: "profile",
     href: "/profile",
-    label: "People",
+    label: "Profile",
     icon: (
       <>
-        <circle cx="12" cy="9" r="3.4" />
-        <path d="M6.5 18.2c1.3-2.5 3.6-3.8 5.5-3.8s4.2 1.3 5.5 3.8" strokeLinecap="round" />
+        <circle cx="12" cy="9" r="3.1" />
+        <path d="M6.5 18.1c1.2-2.3 3.4-3.5 5.5-3.5s4.3 1.2 5.5 3.5" strokeLinecap="round" />
       </>
     ),
   },
@@ -98,7 +98,6 @@ export function AppShell({
           return false;
         }
 
-        // Keep polling for transient errors or when no invitation exists.
         return true;
       }
     };
@@ -149,11 +148,6 @@ export function AppShell({
                     <h1 className="mt-2 text-[27px] font-semibold tracking-[-0.04em] text-white">{title}</h1>
                     {subtitle ? <p className="mt-3 max-w-[320px] text-[15px] leading-6 text-white/60">{subtitle}</p> : null}
                   </div>
-                  {headerBadge === null ? null : (
-                    <div className="rounded-full border border-white/10 bg-white/6 px-3 py-2 text-[12px] font-medium text-white/72 backdrop-blur-xl">
-                      {headerBadge ?? (pathname === "/profile" ? "People" : "Ready")}
-                    </div>
-                  )}
                 </div>
               </header>
             ) : null}
@@ -166,40 +160,17 @@ export function AppShell({
 
             {showNav ? (
               <nav className="border-t border-white/8 bg-[rgba(8,11,16,0.88)] px-3 pb-[calc(10px+env(safe-area-inset-bottom))] pt-3 backdrop-blur-xl">
-                <div className="grid grid-cols-5 items-end gap-1">
+                <div className="grid grid-cols-4 items-stretch gap-0">
                   {tabs.map((tab) => {
                     const isActive = tab.id === activeTab;
-                    const isMemory = tab.id === "memory";
-
-                    if (isMemory) {
-                      return (
-                        <Link
-                          key={tab.id}
-                          href={tab.href}
-                          aria-label={tab.label}
-                          className={cx(
-                            "group relative -mt-8 flex flex-col items-center justify-center gap-2 rounded-[24px] px-1 pb-1 pt-0 text-center transition duration-200 active:scale-[0.98]",
-                            isActive ? "text-white" : "text-white/62",
-                          )}
-                        >
-                          <span className="grid h-16 w-16 place-items-center rounded-[22px] bg-[linear-gradient(180deg,#93f4d5_0%,#65c9ad_100%)] text-[0px] text-[#08110f] shadow-[0_18px_40px_rgba(87,209,171,0.28)] ring-1 ring-white/25 transition duration-200 group-active:scale-[0.98]">
-                            <svg viewBox="0 0 24 24" className="size-[20px]" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M12 5v14" strokeLinecap="round" />
-                              <path d="M5 12h14" strokeLinecap="round" />
-                            </svg>
-                          </span>
-                          <span className="text-[10px] font-semibold tracking-[0.06em]">+</span>
-                        </Link>
-                      );
-                    }
 
                     return (
                       <Link
                         key={tab.id}
                         href={tab.href}
                         className={cx(
-                          "flex min-h-[58px] flex-col items-center justify-center gap-1 rounded-[18px] px-1 py-2 text-center transition duration-200 active:scale-[0.98]",
-                          isActive ? "bg-white/8 text-white" : "text-white/48 hover:bg-white/5 hover:text-white/72",
+                          "flex h-full min-h-[58px] w-full flex-col items-center justify-center gap-1 rounded-[18px] px-0 py-2 text-center transition duration-200 active:scale-[0.98]",
+                          isActive ? "bg-white/8 text-white shadow-[0_10px_24px_rgba(0,0,0,0.16)]" : "text-white/48 hover:bg-white/5 hover:text-white/72",
                         )}
                       >
                         <svg viewBox="0 0 24 24" className="size-[19px]" fill="none" stroke="currentColor" strokeWidth="1.9">
@@ -357,6 +328,3 @@ export function SearchPill({ children }: { children: ReactNode }) {
     </button>
   );
 }
-
-
-

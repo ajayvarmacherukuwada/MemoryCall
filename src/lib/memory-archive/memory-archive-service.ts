@@ -40,14 +40,14 @@ let currentUploadController: { promise: Promise<MemoryArchiveUploadResponse>; ca
 
 function buildBlockedMessage(code: string | undefined, providerState: Awaited<ReturnType<typeof fetchProviderSession>>) {
   if (providerState.providerConnectionState === "onboarding" || code === "needs_channel") {
-    return "This Google account does not currently own a YouTube channel. Create one to enable automatic memory archiving.";
+    return "Reconnect Google to continue archiving.";
   }
 
   if (providerState.providerConnectionState === "needs_reconnect" || providerState.providerConnectionState === "revoked" || code === "revoked_token") {
-    return "Your Google permission needs to be refreshed before archive uploads can continue. Reconnect Google in Profile.";
+    return "Reconnect Google to continue archiving.";
   }
 
-  return "Archive upload is not ready yet. Please reconnect Google and try again.";
+  return "Reconnect Google to continue archiving.";
 }
 
 export const MemoryArchiveService = {

@@ -1,6 +1,5 @@
-﻿import { SearchScreen } from "@/components/letscall/search-screen";
+import { redirect } from "next/navigation";
 
 export default function Page() {
-  return <SearchScreen />;
+  redirect("/library");
 }
-

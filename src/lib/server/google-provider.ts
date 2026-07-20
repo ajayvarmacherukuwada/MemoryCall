@@ -1,4 +1,4 @@
-import { getSupabaseAdminClient } from "@/lib/server/supabase-admin";
+﻿import { getSupabaseAdminClient } from "@/lib/server/supabase-admin";
 import {
   decryptGoogleSecret,
   encryptGoogleSecret,
@@ -157,6 +157,12 @@ async function upsertOAuthTokenRow(input: {
   revokedAt: string | null;
 }) {
   const supabase = getSupabaseAdminClient();
+  logProviderEvent("oauth_token_upsert_start", {
+    profileId: input.profileId,
+    providerAccountId: input.providerAccountId,
+    hasRefreshToken: Boolean(input.refreshTokenEncrypted),
+    expiresAt: input.expiresAt,
+  });
   const { error } = await supabase.rpc("upsert_private_oauth_token", {
     p_profile_id: input.profileId,
     p_provider_account_id: input.providerAccountId,
@@ -313,7 +319,22 @@ export async function syncGoogleProviderConnection(input: {
     scope: string;
   };
 }) {
+  logProviderEvent("sync_start", {
+    profileId: input.profileId,
+    googleSubject: input.googleUser.sub,
+    googleEmail: input.googleUser.email ?? null,
+    hasRefreshToken: Boolean(input.googleTokens.refreshToken),
+    scope: input.googleTokens.scope,
+  });
+
   const existing = await selectGoogleProviderAccount(input.profileId);
+  logProviderEvent("existing_account_loaded", {
+    profileId: input.profileId,
+    accountId: existing.account?.id ?? null,
+    connectionStatus: existing.account?.connection_status ?? null,
+    archiveEnabled: existing.account?.archive_enabled ?? null,
+  });
+
   const existingTokens = existing.account ? await selectOAuthTokens(existing.account.id) : null;
   const resolvedRefreshToken = input.googleTokens.refreshToken ?? (existingTokens ? decryptGoogleSecret(existingTokens.refresh_token_encrypted) : null);
 
@@ -323,7 +344,22 @@ export async function syncGoogleProviderConnection(input: {
     throw error;
   }
 
+  logProviderEvent("channel_verification_started", {
+    profileId: input.profileId,
+    accountId: existing.account?.id ?? null,
+  });
   const channel = await fetchGoogleChannelInfo(input.googleTokens.accessToken);
+  logProviderEvent("channel_verification_succeeded", {
+    profileId: input.profileId,
+    accountId: existing.account?.id ?? null,
+    channelId: channel?.id ?? null,
+    channelTitle: channel?.title ?? null,
+  });
+
+  logProviderEvent("provider_account_write_start", {
+    profileId: input.profileId,
+    hasChannel: Boolean(channel?.id),
+  });
   const { accountId, archiveEnabled } = await getOrCreateGoogleProviderAccount({
     profileId: input.profileId,
     googleUser: input.googleUser,
@@ -333,6 +369,12 @@ export async function syncGoogleProviderConnection(input: {
     accessToken: input.googleTokens.accessToken,
     refreshToken: resolvedRefreshToken,
     tokenType: input.googleTokens.tokenType,
+  });
+  logProviderEvent("provider_account_write_complete", {
+    profileId: input.profileId,
+    accountId,
+    archiveEnabled,
+    channelId: channel?.id ?? null,
   });
 
   logProviderEvent("callback_synced", {
@@ -350,6 +392,7 @@ export async function syncGoogleProviderConnection(input: {
     youtubeReason: channel?.id ? null : "No YouTube channel found for this Google account.",
   };
 }
+
 export async function getGoogleProviderSession(profileId: string): Promise<ProviderSessionSnapshot> {
   const { account, provider } = await selectGoogleProviderAccount(profileId);
   if (!account) {
@@ -429,6 +472,12 @@ export async function getGoogleProviderSession(profileId: string): Promise<Provi
           revokedAt: null,
         });
         const refreshedChannel = isFreshChannelMetadata(account.last_verified_at) && youtube?.id ? youtube : await fetchGoogleChannelInfo(refreshed.accessToken).catch(() => null);
+        logProviderEvent("access_token_refresh_succeeded", {
+          profileId,
+          accountId: account.id,
+          hasNewRefreshToken: Boolean(refreshed.refreshToken),
+          hasChannelAfterRefresh: Boolean(refreshedChannel?.id),
+        });
         if (refreshedChannel?.id && !account.archive_enabled) {
           await updateProviderAccount(account.id, {
             archive_enabled: true,
@@ -506,20 +555,30 @@ export async function getGoogleProviderSession(profileId: string): Promise<Provi
 export async function getGoogleAccessToken(profileId: string) {
   const { account } = await selectGoogleProviderAccount(profileId);
   if (!account) {
-    const error = new Error("Google is not connected for this account.");
+    const error = new Error("Reconnect Google to continue archiving.");
     (error as Error & { code?: string }).code = "needs_reconnect";
     throw error;
   }
 
+  logProviderEvent("access_token_lookup_start", {
+    profileId,
+    accountId: account.id,
+  });
+
   const tokens = await selectOAuthTokens(account.id);
   if (!tokens) {
-    const error = new Error("Google tokens are missing for this account.");
+    const error = new Error("Reconnect Google to continue archiving.");
     (error as Error & { code?: string }).code = "needs_reconnect";
     throw error;
   }
 
   const expiresAtMs = new Date(tokens.expires_at).getTime();
   if (expiresAtMs > Date.now() + TOKEN_REFRESH_SKEW_MS) {
+    logProviderEvent("access_token_returned", {
+      profileId,
+      accountId: account.id,
+      refreshed: false,
+    });
     return {
       accessToken: decryptGoogleSecret(tokens.access_token_encrypted),
       providerAccountId: account.id,
@@ -528,6 +587,10 @@ export async function getGoogleAccessToken(profileId: string) {
   }
 
   try {
+    logProviderEvent("access_token_refresh_started", {
+      profileId,
+      accountId: account.id,
+    });
     const refreshToken = decryptGoogleSecret(tokens.refresh_token_encrypted);
     const refreshed = await refreshGoogleAccessToken(refreshToken);
     await upsertOAuthTokenRow({
@@ -542,6 +605,12 @@ export async function getGoogleAccessToken(profileId: string) {
       revokedAt: null,
     });
 
+    logProviderEvent("access_token_refresh_succeeded", {
+      profileId,
+      accountId: account.id,
+      hasNewRefreshToken: Boolean(refreshed.refreshToken),
+    });
+
     return {
       accessToken: refreshed.accessToken,
       providerAccountId: account.id,
@@ -553,7 +622,12 @@ export async function getGoogleAccessToken(profileId: string) {
       archive_enabled: false,
     });
     await markOAuthTokenRevoked(account.id, new Date().toISOString());
-    const wrapped = new Error(error instanceof Error ? error.message : "Unable to refresh Google access token.");
+    logProviderEvent("refresh_failed", {
+      profileId,
+      accountId: account.id,
+      ...getErrorSummary(error),
+    });
+    const wrapped = new Error("Reconnect Google to continue archiving.");
     (wrapped as Error & { code?: string }).code = (error as Error & { code?: string }).code ?? "needs_reconnect";
     throw wrapped;
   }
@@ -591,3 +665,4 @@ export async function disconnectGoogleProvider(profileId: string) {
 
   logProviderEvent("disconnected", { profileId, accountId: account.id });
 }
+
